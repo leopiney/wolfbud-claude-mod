@@ -1,0 +1,6 @@
+node_modules/
+pnpm-lock.yaml
+# Built by `pnpm window:build`
+mods/wolfbud/bridge/window/
+# Written by Claude Code on every mod load
+mods/*/.claude-plugin/types/

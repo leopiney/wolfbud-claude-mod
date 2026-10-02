@@ -12,7 +12,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, PluginOptions, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
 
-import type { WolfbudBridge, WolfbudCall, WolfbudClaude, WolfbudLine } from '../types'
+import type { WolfbudBridge, WolfbudCall, WolfbudLine } from '../types'
 import { clip, describeTool, errorGist, fitTail, formatSnapshot, projectName, splitBridgeOutput, toolLabel, wrappedRows } from './activity'
 import type { BridgeMessage, ClaudeEvent, WindowCommand } from './events'
 
@@ -61,9 +61,7 @@ let child: BridgeStream | null = null
 let pendingWindow: { withCall: boolean } | null = null
 
 function readBrowser(value: unknown): Browser | null {
-  return value === 'default' || value === 'terminal-browser' || value === 'orca-browser' || value === 'chrome-app'
-    ? value
-    : null
+  return value === 'default' || value === 'terminal-browser' || value === 'orca-browser' || value === 'chrome-app' ? value : null
 }
 
 function readSettings(options: PluginOptions): Settings {
@@ -318,7 +316,10 @@ async function openWindow($: EngineInterface, withCall: boolean): Promise<void> 
     const home = (await $.env.get('HOME')) ?? ''
     const opened = await $.process
       .run([
-        'open', '-na', 'Google Chrome', '--args',
+        'open',
+        '-na',
+        'Google Chrome',
+        '--args',
         `--user-data-dir=${home}/.wolfbud/chrome`,
         `--app=${url}`,
         '--window-size=400,680',
@@ -456,8 +457,14 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    const from = e.origin.kind === 'plugin' ? (e.origin.name === 'wolfbud' ? 'wolfbud' : null)
-      : ['composer', 'bridge', 'sdk'].includes(e.origin.kind) ? 'user' : null
+    const from =
+      e.origin.kind === 'plugin'
+        ? e.origin.name === 'wolfbud'
+          ? 'wolfbud'
+          : null
+        : ['composer', 'bridge', 'sdk'].includes(e.origin.kind)
+          ? 'user'
+          : null
     if (from !== null && e.text.trim() !== '') {
       const text = from === 'wolfbud' ? e.text.replace(LEAD, '').trim() : e.text
       await report($, { kind: 'prompt', at: await $.clock.now(), text: clip(text, 1500), from })
@@ -534,9 +541,10 @@ export const register: Register = (on, options) => {
     // that fit beside the header and buttons, and drop the oldest off the top.
     const { bodyColumns, scroll } = e.props
     const room = scroll.bodyRows - PANE_CHROME_ROWS - found.reduce((rows, problem) => rows + wrappedRows(problem, bodyColumns), 0)
-    const shown = e.surface === 'terminal'
-      ? fitTail(list, Math.max(1, room), bodyColumns - LINE_INDENT)
-      : list.slice(-Math.max(3, (e.viewport?.rows ?? 24) - 10))
+    const shown =
+      e.surface === 'terminal'
+        ? fitTail(list, Math.max(1, room), bodyColumns - LINE_INDENT)
+        : list.slice(-Math.max(3, (e.viewport?.rows ?? 24) - 10))
     const status = callLabel(c)
     const isOnCall = c.status === 'live' || c.status === 'connecting'
 
