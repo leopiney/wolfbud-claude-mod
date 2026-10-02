@@ -15,7 +15,7 @@ Claude Code ── wolfbud mod (hooks/register.tsx) ─────────�
                           3D wolf + ElevenLabs voice agent (WebRTC)
 ```
 
-- **The window** holds the call, because a mod's sandbox has no microphone, sockets or WebGL. It opens as a small Chrome app window with its own profile, so the mic grant sticks and the pane can start calls without a click.
+- **The window** holds the call, because a mod's sandbox has no microphone, sockets or WebGL. In Orca it opens as a tab in Orca's built-in browser; elsewhere as a small Chrome app window with its own profile, so the mic grant sticks and the pane can start calls without a click.
 - **What the agent hears:** a snapshot of the session when the call starts, rolling `[claude activity]` updates (quiet context), and `[claude event]` messages when Claude finishes a task or waits for permission. Those wait for a pause, so WolfBud doesn't talk over you.
 - **What the agent can do:** `wolfbud_send_to_claude` turns what you decided into a prompt:
   - Claude idle: a new turn starts.
@@ -36,6 +36,8 @@ pnpm agent:simulate                                  # optional: a simulated cal
 ```
 
 ## Install
+
+`ELEVENLABS_API_KEY=… pnpm run install-plugin` from the repo root does Setup and everything below in one go (`--skip-agent` skips the agent sync, `--dry-run` lists the steps). Restart Claude Code afterwards. The manual steps:
 
 The repo is a local marketplace (`.claude-plugin/marketplace.json`), so it installs into every session, desktop app included:
 
@@ -81,14 +83,14 @@ The pane's buttons (`c` call, `e` end, `w` window) do the same. In the fullscree
 | --- | --- | --- |
 | `api_key` | `$ELEVENLABS_API_KEY` | Used by the bridge to mint call tokens. Sensitive. |
 | `port` | 4747 | Preferred bridge port; the next nine are tried. Keep it stable: the mic grant is per origin. |
-| `browser` | `chrome-app` | `orca-browser` opens the window as a tab in Orca's built-in browser, `terminal-browser` in a split pane of your terminal (see below). `default` opens your default browser instead; you then click Call in the window. |
+| `browser` | `auto` | `auto` opens the window in Orca's built-in browser when the session runs in an Orca terminal, else a Chrome app window. `chrome-app` always opens the Chrome app window. `orca-browser` opens the window as a tab in Orca's built-in browser, `terminal-browser` in a split pane of your terminal (see below). `default` opens your default browser instead; you then click Call in the window. |
 
 ### In Orca (orca-browser)
 
-WolfBud is optimized for the [Orca](https://orca.build) terminal: with `browser` set to `orca-browser`, the window opens as a tab in Orca's built-in browser, next to the session, instead of a separate Chrome window.
+WolfBud is optimized for the [Orca](https://orca.build) terminal: the window opens as a tab in Orca's built-in browser, next to the session, instead of a separate Chrome window. This is the default (`browser: auto`) whenever the session runs in an Orca terminal; set `browser` to `chrome-app` to opt out.
 
 ```bash
-WOLFBUD_BROWSER=orca-browser claude --plugin-dir ./mods/wolfbud   # or set the `browser` option
+WOLFBUD_BROWSER=orca-browser claude --plugin-dir ./mods/wolfbud   # force it; `auto` already does this inside Orca
 ```
 
 **Orca setup.** What has to be true for it to work:

@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc -p window && tsc -p mods/wolfbud",
-    "prepare": "husky"
+    "prepare": "husky",
+    "install-plugin": "node scripts/install-plugin.mjs"
   },
   "devDependencies": {
     "@elevenlabs/client": "1.26.0",

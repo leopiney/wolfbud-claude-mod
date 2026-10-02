@@ -12,7 +12,12 @@
   --bad: #ff7a8a;
   --badge-from: #3a3b8f;
   --badge-to: #1a1a44;
-  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font:
+    14px/1.4 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
   color-scheme: dark;
 }
 
@@ -50,14 +55,9 @@ button {
 .top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   -webkit-app-region: drag;
-}
-
-.brand {
-  font-weight: 650;
-  letter-spacing: 0.02em;
 }
 
 .claude-chip {
@@ -107,7 +107,9 @@ button {
   border: 0;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, var(--badge-from), var(--badge-to) 72%);
-  box-shadow: 0 18px 50px rgb(0 0 0 / 45%), inset 0 0 0 1px rgb(255 255 255 / 6%);
+  box-shadow:
+    0 18px 50px rgb(0 0 0 / 45%),
+    inset 0 0 0 1px rgb(255 255 255 / 6%);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -127,7 +129,10 @@ button {
   inset: -7px;
   border-radius: 50%;
   border: 3px solid var(--line);
-  transition: border-color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    opacity 0.3s ease;
   pointer-events: none;
 }
 
@@ -319,6 +324,18 @@ button {
   color: var(--text-dim);
   font-size: 12.5px;
   cursor: pointer;
+}
+
+.version {
+  position: fixed;
+  right: 8px;
+  bottom: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .overlay {

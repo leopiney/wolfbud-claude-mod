@@ -28,7 +28,7 @@ const ORCA_CLIS = ['orca', '/Applications/Orca.app/Contents/Resources/bin/orca']
 const USAGE = 'Usage: /wolfbud [call | end | window | stop | status]'
 const LEAD = 'The user asked WolfBud, the voice assistant on a call beside this session, to pass this on:'
 
-type Browser = 'chrome-app' | 'orca-browser' | 'terminal-browser' | 'default'
+type Browser = 'auto' | 'chrome-app' | 'orca-browser' | 'terminal-browser' | 'default'
 type Settings = { apiKey: string; port: number; browser: Browser }
 type BridgeStream = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 type SendRequest = Extract<BridgeMessage, { t: 'send' }>
@@ -54,14 +54,16 @@ const claude = atom({ plugin: 'wolfbud', key: 'claude' } as const, { isBusy: fal
 
 // Module variables reset on a reload, and so does the bridge (the engine
 // kills a module's children with it). What must survive lives in $.state.
-let settings: Settings = { apiKey: '', port: DEFAULT_PORT, browser: 'chrome-app' }
+let settings: Settings = { apiKey: '', port: DEFAULT_PORT, browser: 'auto' }
 /** The running bridge's output stream; ending it kills the bridge. */
 let child: BridgeStream | null = null
 /** Open the window (and maybe start a call) once the bridge says it's ready. */
 let pendingWindow: { withCall: boolean } | null = null
 
 function readBrowser(value: unknown): Browser | null {
-  return value === 'default' || value === 'terminal-browser' || value === 'orca-browser' || value === 'chrome-app' ? value : null
+  return value === 'auto' || value === 'default' || value === 'terminal-browser' || value === 'orca-browser' || value === 'chrome-app'
+    ? value
+    : null
 }
 
 function readSettings(options: PluginOptions): Settings {
@@ -69,7 +71,7 @@ function readSettings(options: PluginOptions): Settings {
   return {
     apiKey: typeof options.api_key === 'string' ? options.api_key.trim() : '',
     port: Number.isInteger(port) && port > 0 && port < 65_536 ? port : DEFAULT_PORT,
-    browser: readBrowser(options.browser) ?? 'chrome-app',
+    browser: readBrowser(options.browser) ?? 'auto',
   }
 }
 
@@ -287,7 +289,9 @@ async function openWindow($: EngineInterface, withCall: boolean): Promise<void> 
   const current = await read($, bridge)
   const url = `http://127.0.0.1:${current.port}/#k=${current.key}${withCall ? '&call=1' : ''}`
   // WOLFBUD_BROWSER wins over the option: a --plugin-dir session has no stored options.
-  const browser = readBrowser(await $.env.get('WOLFBUD_BROWSER')) ?? settings.browser
+  let browser = readBrowser(await $.env.get('WOLFBUD_BROWSER')) ?? settings.browser
+  // auto: Orca's browser when this session runs in an Orca terminal, else a Chrome app window.
+  if (browser === 'auto') browser = (await $.env.get('ORCA_WORKTREE_ID')) ? 'orca-browser' : 'chrome-app'
   if (browser === 'orca-browser') {
     // Orca sets ORCA_WORKTREE_ID in the terminals it manages; without it this session
     // isn't in Orca and `orca tab create` has no worktree to open the tab in.

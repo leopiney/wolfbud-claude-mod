@@ -31,6 +31,8 @@ const announceBox = $<HTMLInputElement>('announce')
 const overlay = $('overlay')
 const overlayText = $('overlay-text')
 
+$('version').textContent = `v${__APP_VERSION__}`
+
 const events: ClaudeEvent[] = []
 let session: Partial<SessionInfo> = {}
 let isClaudeBusy = false
@@ -137,9 +139,12 @@ const call = new WolfCall({
         userCaption.textContent = ''
       }
       statusText.textContent =
-        status === 'connecting' ? 'Calling…'
-          : status === 'live' ? 'Listening'
-            : status === 'error' ? (error ?? 'The call failed')
+        status === 'connecting'
+          ? 'Calling…'
+          : status === 'live'
+            ? 'Listening'
+            : status === 'error'
+              ? (error ?? 'The call failed')
               : 'Not on a call'
       wolf?.mood(status === 'live' ? 'listening' : status === 'connecting' ? 'awake' : 'asleep')
     },

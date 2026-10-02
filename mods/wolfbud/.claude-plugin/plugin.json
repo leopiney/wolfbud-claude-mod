@@ -1,6 +1,6 @@
 {
   "name": "wolfbud",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "WolfBud: a voice coworker (ElevenLabs agent + 3D wolf) that watches the session and can send prompts to Claude",
   "author": { "name": "Leonardo Piñeyro" },
   "types": "./types/index.d.ts",
@@ -20,9 +20,9 @@
     "browser": {
       "type": "string",
       "title": "Window",
-      "description": "chrome-app: a dedicated Chrome app window (keeps the mic grant, lets the pane start calls). orca-browser: a tab in Orca's built-in browser (needs this session to run in Orca; falls back to chrome-app). terminal-browser: a split pane in your terminal (needs the terminal-browser CLI; falls back to chrome-app). default: your default browser.",
-      "options": ["chrome-app", "orca-browser", "terminal-browser", "default"],
-      "default": "chrome-app"
+      "description": "auto: a tab in Orca's built-in browser when this session runs in Orca, else chrome-app. chrome-app: a dedicated Chrome app window (keeps the mic grant, lets the pane start calls). orca-browser: a tab in Orca's built-in browser (needs this session to run in Orca; falls back to chrome-app). terminal-browser: a split pane in your terminal (needs the terminal-browser CLI; falls back to chrome-app). default: your default browser.",
+      "options": ["auto", "chrome-app", "orca-browser", "terminal-browser", "default"],
+      "default": "auto"
     }
   }
 }

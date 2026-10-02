@@ -11,7 +11,6 @@
   <body>
     <main id="app" class="app" data-call="idle" data-mode="listening" data-claude="idle" data-hearing="no" data-wolf="shown">
       <header class="top">
-        <span class="brand">WolfBud</span>
         <span class="claude-chip"><span class="claude-dot"></span><span id="claude-status">Claude is idle</span></span>
       </header>
 
@@ -40,6 +39,8 @@
         </button>
         <label class="announce"><input id="announce" type="checkbox" checked /> Speak up when Claude finishes</label>
       </footer>
+
+      <span id="version" class="version"></span>
 
       <div id="overlay" class="overlay" hidden><p id="overlay-text"></p></div>
     </main>

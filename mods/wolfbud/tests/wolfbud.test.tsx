@@ -35,8 +35,7 @@ function fakeBridge(on: On, { failing = [] }: { failing?: string[] } = {}) {
       }
     }
   }
-  const until = (check: () => boolean) =>
-    check() ? Promise.resolve() : new Promise<void>(done => waiting.push({ check, done }))
+  const until = (check: () => boolean) => (check() ? Promise.resolve() : new Promise<void>(done => waiting.push({ check, done })))
 
   on('process.spawn', async function* (_$, e) {
     spawned.push({ argv: e.argv, env: { ...e.env } })
@@ -144,16 +143,20 @@ describe('the bridge', () => {
     bridge.close()
   })
 
-  test('the browser option terminal-browser opens the window in a terminal split', { options: { browser: 'terminal-browser' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+  test(
+    'the browser option terminal-browser opens the window in a terminal split',
+    { options: { browser: 'terminal-browser' } },
+    async ($, on) => {
+      mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+      const bridge = fakeBridge(on)
 
-    await startWolfbud($, bridge)
+      await startWolfbud($, bridge)
 
-    const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
-    expect(bridge.runs).toEqual([['terminal-browser', 'new-tab', `http://127.0.0.1:4747/#k=${key}`]])
-    bridge.close()
-  })
+      const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
+      expect(bridge.runs).toEqual([['terminal-browser', 'new-tab', `http://127.0.0.1:4747/#k=${key}`]])
+      bridge.close()
+    },
+  )
 
   test('WOLFBUD_BROWSER=terminal-browser wins over the option', async ($, on) => {
     mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_BROWSER: 'terminal-browser' })
@@ -177,7 +180,7 @@ describe('the bridge', () => {
     bridge.close()
   })
 
-  test('the browser option orca-browser opens the window in an Orca browser tab', { options: { browser: 'orca-browser' } }, async ($, on) => {
+  test('by default the window opens in an Orca browser tab when the session runs in Orca', async ($, on) => {
     mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
     const bridge = fakeBridge(on)
 
@@ -187,6 +190,42 @@ describe('the bridge', () => {
     expect(bridge.runs).toEqual([['orca', 'tab', 'create', '--url', `http://127.0.0.1:4747/#k=${key}`, '--json']])
     bridge.close()
   })
+
+  test('by default the window is a Chrome app window outside Orca, without a toast', async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    expect(bridge.runs).toHaveLength(1)
+    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
+    bridge.close()
+  })
+
+  test('browser: chrome-app stays a Chrome window even inside Orca', { options: { browser: 'chrome-app' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
+    bridge.close()
+  })
+
+  test(
+    'the browser option orca-browser opens the window in an Orca browser tab',
+    { options: { browser: 'orca-browser' } },
+    async ($, on) => {
+      mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
+      const bridge = fakeBridge(on)
+
+      await startWolfbud($, bridge)
+
+      const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
+      expect(bridge.runs).toEqual([['orca', 'tab', 'create', '--url', `http://127.0.0.1:4747/#k=${key}`, '--json']])
+      bridge.close()
+    },
+  )
 
   test('orca-browser tries the bundled CLI when orca on PATH fails', { options: { browser: 'orca-browser' } }, async ($, on) => {
     mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
@@ -210,16 +249,20 @@ describe('the bridge', () => {
     bridge.close()
   })
 
-  test('orca-browser outside Orca skips the CLI and opens the Chrome app window', { options: { browser: 'orca-browser' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+  test(
+    'orca-browser outside Orca skips the CLI and opens the Chrome app window',
+    { options: { browser: 'orca-browser' } },
+    async ($, on) => {
+      mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+      const bridge = fakeBridge(on)
 
-    await startWolfbud($, bridge)
+      await startWolfbud($, bridge)
 
-    expect(bridge.runs).toHaveLength(1)
-    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-    bridge.close()
-  })
+      expect(bridge.runs).toHaveLength(1)
+      expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
+      bridge.close()
+    },
+  )
 
   test('WOLFBUD_BROWSER=orca-browser wins over the option', { options: { browser: 'default' } }, async ($, on) => {
     mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_BROWSER: 'orca-browser', ORCA_WORKTREE_ID: 'wt' })
@@ -248,7 +291,13 @@ describe('prompts from the agent', () => {
     const bridge = fakeBridge(on)
     await startWolfbud($, bridge)
 
-    bridge.say({ t: 'send', id: 'r1', prompt: 'Rename Submit to Save in the checkout form.', when: 'now', summary: 'Rename Submit to Save' })
+    bridge.say({
+      t: 'send',
+      id: 'r1',
+      prompt: 'Rename Submit to Save in the checkout form.',
+      when: 'now',
+      summary: 'Rename Submit to Save',
+    })
     await bridge.until(() => bridge.postsTo('/api/ack').length === 1)
 
     expect(bridge.submitted).toHaveLength(1)
@@ -308,19 +357,25 @@ describe('activity reports', () => {
   test('a failed Bash call reaches the bridge with its error', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const bridge = fakeBridge(on)
-    on('tool.call', { tool: 'Bash' }, () => ({ isError: true as const, result: 'exit 1', text: 'FAIL src/cart.test.ts\n3 failed, 12 passed' }))
+    on('tool.call', { tool: 'Bash' }, () => ({
+      isError: true as const,
+      result: 'exit 1',
+      text: 'FAIL src/cart.test.ts\n3 failed, 12 passed',
+    }))
     await startWolfbud($, bridge)
 
     await $.tool.call({ tool: 'Bash', command: 'pnpm test', description: 'Run the tests' })
 
     const events = bridge.postsTo('/api/claude').flatMap(post => (post.body.events as unknown[] | undefined) ?? [])
-    expect(events).toContainEqual(expect.objectContaining({
-      kind: 'tool',
-      tool: 'Bash',
-      detail: 'Run the tests',
-      status: 'error',
-      error: 'FAIL src/cart.test.ts 3 failed, 12 passed',
-    }))
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'tool',
+        tool: 'Bash',
+        detail: 'Run the tests',
+        status: 'error',
+        error: 'FAIL src/cart.test.ts 3 failed, 12 passed',
+      }),
+    )
     bridge.close()
   })
 
@@ -332,7 +387,9 @@ describe('activity reports', () => {
     await $.turn.start({ text: 'fix the cart', turnId: 'turn-9' })
     await $.turn.complete({ answer: 'Fixed the rounding bug.', durationMs: 4200, isAborted: false, turnId: 'turn-9', reason: 'answer' })
 
-    const kinds = bridge.postsTo('/api/claude').flatMap(post => ((post.body.events as Array<{ kind: string }> | undefined) ?? []).map(event => event.kind))
+    const kinds = bridge
+      .postsTo('/api/claude')
+      .flatMap(post => ((post.body.events as Array<{ kind: string }> | undefined) ?? []).map(event => event.kind))
     expect(kinds).toEqual(['turn-start', 'turn-complete'])
     const done = bridge.postsTo('/api/claude').at(-1)?.body.events
     expect(done).toEqual([expect.objectContaining({ answer: 'Fixed the rounding bug.', reason: 'answer' })])
@@ -410,7 +467,11 @@ describe('the pane', () => {
     await startWolfbud($, bridge)
     bridge.say({ t: 'status', call: 'live', mode: 'listening' })
     for (let i = 1; i <= 12; i += 1) {
-      bridge.say({ t: 'line', role: i % 2 === 1 ? 'user' : 'agent', text: `line ${i}: a sentence long enough to wrap onto a second row of the pane` })
+      bridge.say({
+        t: 'line',
+        role: i % 2 === 1 ? 'user' : 'agent',
+        text: `line ${i}: a sentence long enough to wrap onto a second row of the pane`,
+      })
     }
     await bridge.settle()
 
