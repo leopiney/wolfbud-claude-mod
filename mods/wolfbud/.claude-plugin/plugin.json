@@ -1,0 +1,28 @@
+{
+  "name": "wolfbud",
+  "version": "0.1.0",
+  "description": "WolfBud: a voice coworker (ElevenLabs agent + 3D wolf) that watches the session and can send prompts to Claude",
+  "author": { "name": "Leonardo Piñeyro" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "ElevenLabs API key",
+      "description": "The local bridge mints call tokens with it. Falls back to the ELEVENLABS_API_KEY environment variable.",
+      "sensitive": true
+    },
+    "port": {
+      "type": "number",
+      "title": "Bridge port",
+      "description": "Preferred local port for the WolfBud window; the next nine are tried when it's taken.",
+      "default": 4747
+    },
+    "browser": {
+      "type": "string",
+      "title": "Window",
+      "description": "chrome-app: a dedicated Chrome app window (keeps the mic grant, lets the pane start calls). default: your default browser.",
+      "options": ["chrome-app", "default"],
+      "default": "chrome-app"
+    }
+  }
+}

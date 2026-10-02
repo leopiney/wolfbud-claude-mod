@@ -1,0 +1,12 @@
+{
+  "name": "elevenlabs-mods",
+  "owner": { "name": "Leonardo Piñeyro" },
+  "description": "Claude Code mods that use ElevenLabs",
+  "plugins": [
+    {
+      "name": "wolfbud",
+      "source": "./mods/wolfbud",
+      "description": "WolfBud: a voice coworker (ElevenLabs agent + 3D wolf) that watches the session and can send prompts to Claude"
+    }
+  ]
+}

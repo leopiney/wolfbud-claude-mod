@@ -1,0 +1,20 @@
+{
+  "name": "claude-mode-elevenlabs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "window:dev": "vite --config window/vite.config.ts",
+    "window:build": "vite build --config window/vite.config.ts",
+    "window:typecheck": "tsc -p window",
+    "agent:sync": "node scripts/sync-agent.mjs",
+    "agent:simulate": "node scripts/simulate-agent.mjs"
+  },
+  "devDependencies": {
+    "@elevenlabs/client": "1.26.0",
+    "@elevenlabs/elevenlabs-js": "2.70.0",
+    "@types/three": "0.186.0",
+    "three": "0.186.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.2"
+  }
+}

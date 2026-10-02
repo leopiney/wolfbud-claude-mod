@@ -1,0 +1,362 @@
+:root {
+  --bg: #11111f;
+  --bg-raised: #1b1b31;
+  --line: #2b2b48;
+  --text: #ecebff;
+  --text-dim: #9a99c2;
+  --accent: #8b8cff;
+  --accent-strong: #6d6ef7;
+  --listen: #4fd6a0;
+  --talk: #a98bff;
+  --busy: #f5b453;
+  --bad: #ff7a8a;
+  --badge-from: #3a3b8f;
+  --badge-to: #1a1a44;
+  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto auto;
+  height: 100%;
+  padding: 14px 16px 16px;
+  gap: 10px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  -webkit-app-region: drag;
+}
+
+.brand {
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.claude-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.claude-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.app[data-claude='busy'] .claude-chip {
+  color: var(--busy);
+  border-color: color-mix(in srgb, var(--busy) 40%, transparent);
+}
+
+.app[data-claude='busy'] .claude-dot {
+  background: var(--busy);
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 0;
+}
+
+.badge {
+  position: relative;
+  width: 236px;
+  height: 236px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--badge-from), var(--badge-to) 72%);
+  box-shadow: 0 18px 50px rgb(0 0 0 / 45%), inset 0 0 0 1px rgb(255 255 255 / 6%);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.2s ease;
+}
+
+.badge:active {
+  transform: scale(0.98);
+}
+
+.ring {
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 3px solid var(--line);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.wolf {
+  display: block;
+  width: 220px;
+  height: 220px;
+  pointer-events: none;
+}
+
+.wolf canvas {
+  display: block;
+}
+
+.app[data-call='idle'] .wolf,
+.app[data-call='error'] .wolf {
+  filter: saturate(0.75) brightness(0.9);
+}
+
+.app[data-call='connecting'] .ring {
+  border-color: var(--accent);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.app[data-call='live'] .ring {
+  border-color: var(--listen);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--listen) 35%, transparent);
+}
+
+.app[data-call='live'][data-hearing='yes'] .ring {
+  box-shadow: 0 0 34px color-mix(in srgb, var(--listen) 60%, transparent);
+}
+
+.app[data-call='live'][data-mode='speaking'] .ring {
+  border-color: var(--talk);
+  box-shadow: 0 0 30px color-mix(in srgb, var(--talk) 50%, transparent);
+}
+
+.app[data-call='error'] .ring {
+  border-color: var(--bad);
+}
+
+.status {
+  margin: 0;
+  min-height: 1.4em;
+  color: var(--text-dim);
+  text-align: center;
+  max-width: 34ch;
+}
+
+.app[data-call='error'] .status {
+  color: var(--bad);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.captions {
+  min-height: 62px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.caption {
+  margin: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+}
+
+.caption:empty {
+  display: none;
+}
+
+.caption-agent {
+  -webkit-line-clamp: 3;
+}
+
+.caption-user {
+  -webkit-line-clamp: 2;
+  color: var(--text-dim);
+}
+
+.caption-user::before {
+  content: 'you · ';
+  color: var(--listen);
+}
+
+.activity h2 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  min-height: 108px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+}
+
+.feed:empty::before {
+  content: 'Nothing yet. Claude’s steps show up here.';
+  color: var(--text-dim);
+}
+
+.feed li {
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+}
+
+.feed-icon {
+  flex: none;
+  width: 1.1em;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.feed-ok .feed-icon {
+  color: var(--listen);
+}
+
+.feed-bad .feed-icon,
+.feed-bad .feed-text {
+  color: var(--bad);
+}
+
+.feed-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.call {
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.call.primary {
+  border-color: transparent;
+  background: var(--accent-strong);
+}
+
+.call:hover {
+  filter: brightness(1.1);
+}
+
+.mute {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+.mute:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mute.muted {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 50%, transparent);
+}
+
+.announce {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgb(10 10 22 / 86%);
+  text-align: center;
+  backdrop-filter: blur(3px);
+}
+
+.overlay[hidden] {
+  display: none;
+}
+
+.overlay p {
+  max-width: 30ch;
+  margin: 0;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring,
+  .claude-dot {
+    animation: none !important;
+  }
+}
