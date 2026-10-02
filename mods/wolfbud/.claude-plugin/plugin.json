@@ -1,6 +1,6 @@
 {
   "name": "wolfbud",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WolfBud: a voice coworker (ElevenLabs agent + 3D wolf) that watches the session and can send prompts to Claude",
   "author": { "name": "Leonardo Piñeyro" },
   "types": "./types/index.d.ts",

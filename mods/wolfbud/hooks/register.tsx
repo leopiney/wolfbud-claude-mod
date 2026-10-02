@@ -13,12 +13,17 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, PluginOptions, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
 
 import type { WolfbudBridge, WolfbudCall, WolfbudClaude, WolfbudLine } from '../types'
-import { clip, describeTool, errorGist, formatSnapshot, projectName, splitBridgeOutput, toolLabel } from './activity'
+import { clip, describeTool, errorGist, fitTail, formatSnapshot, projectName, splitBridgeOutput, toolLabel, wrappedRows } from './activity'
 import type { BridgeMessage, ClaudeEvent, WindowCommand } from './events'
 
 const PANE = 'wolfbud'
 const DEFAULT_PORT = 4747
 const MAX_LINES = 80
+// The pane's rows besides the transcript: the call line, Claude's line, the two
+// margins and the buttons. A transcript line's text starts after its 8-cell
+// label and a 1-cell gap.
+const PANE_CHROME_ROWS = 5
+const LINE_INDENT = 9
 const USAGE = 'Usage: /wolfbud [call | end | window | stop | status]'
 const LEAD = 'The user asked WolfBud, the voice assistant on a call beside this session, to pass this on:'
 
@@ -492,7 +497,14 @@ export const register: Register = (on, options) => {
     const c = await read($, call)
     const list = await read($, lines)
     const { isBusy } = await read($, claude)
-    const shown = list.slice(-Math.max(3, (e.viewport?.rows ?? 24) - 10))
+    const found = problems(b)
+    // The terminal clips a pane's tree from the bottom, so keep the newest lines
+    // that fit beside the header and buttons, and drop the oldest off the top.
+    const { bodyColumns, scroll } = e.props
+    const room = scroll.bodyRows - PANE_CHROME_ROWS - found.reduce((rows, problem) => rows + wrappedRows(problem, bodyColumns), 0)
+    const shown = e.surface === 'terminal'
+      ? fitTail(list, Math.max(1, room), bodyColumns - LINE_INDENT)
+      : list.slice(-Math.max(3, (e.viewport?.rows ?? 24) - 10))
     const status = callLabel(c)
     const isOnCall = c.status === 'live' || c.status === 'connecting'
 
@@ -505,7 +517,7 @@ export const register: Register = (on, options) => {
           </Text>
         </Box>
         <Text dimColor>{isBusy ? 'Claude is working' : 'Claude is idle'}</Text>
-        {problems(b).map(problem => (
+        {found.map(problem => (
           <Text color="yellow" wrap="wrap">
             {problem}
           </Text>

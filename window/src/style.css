@@ -34,12 +34,15 @@ button {
   color: inherit;
 }
 
+/* One column as wide as the window, so long text wraps instead of widening it; the stage gets the rows the text leaves. */
 .app {
   display: grid;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(1.4em, 1fr) auto auto auto;
   height: 100%;
   padding: 14px 16px 16px;
   gap: 10px;
+  overflow-wrap: anywhere;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -97,8 +100,9 @@ button {
 
 .badge {
   position: relative;
-  width: 236px;
-  height: 236px;
+  flex: none;
+  width: var(--badge, 236px);
+  height: var(--badge, 236px);
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -108,6 +112,10 @@ button {
   display: grid;
   place-items: center;
   transition: transform 0.2s ease;
+}
+
+.app[data-wolf='hidden'] .badge {
+  display: none;
 }
 
 .badge:active {
@@ -125,8 +133,8 @@ button {
 
 .wolf {
   display: block;
-  width: 220px;
-  height: 220px;
+  width: calc(var(--badge, 236px) - 16px);
+  height: calc(var(--badge, 236px) - 16px);
   pointer-events: none;
 }
 
@@ -178,6 +186,7 @@ button {
 
 .captions {
   min-height: 62px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -185,21 +194,13 @@ button {
 
 .caption {
   margin: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
 }
 
 .caption:empty {
   display: none;
 }
 
-.caption-agent {
-  -webkit-line-clamp: 3;
-}
-
 .caption-user {
-  -webkit-line-clamp: 2;
   color: var(--text-dim);
 }
 
@@ -259,9 +260,7 @@ button {
 }
 
 .feed-text {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .controls {

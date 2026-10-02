@@ -1,5 +1,6 @@
-// Pure helpers: how Claude's activity reads to the voice agent, and how the
-// bridge's stdout splits into messages. No `$` here, so tests call them bare.
+// Pure helpers: how Claude's activity reads to the voice agent, how the
+// bridge's stdout splits into messages, and how the pane's transcript fits its
+// rows. No `$` here, so tests call them bare.
 
 import type { SessionMessage } from 'claude-code'
 
@@ -132,4 +133,62 @@ export function splitBridgeOutput(buffer: string): { messages: BridgeMessage[]; 
     }
   }
   return { messages, rest }
+}
+
+/**
+ * Rows `text` takes on the terminal wrapped at `width` cells: whole words while
+ * they fit, a word wider than a row broken across rows. Counts code points, so
+ * it reads a wide glyph as one cell.
+ */
+export function wrappedRows(text: string, width: number): number {
+  const cols = Math.max(1, Math.floor(width))
+  let rows = 0
+  for (const paragraph of text.split('\n')) {
+    rows += 1
+    let used = 0
+    for (const word of paragraph.split(' ')) {
+      const cells = [...word].length
+      if (used > 0 && used + 1 + cells <= cols) {
+        used += 1 + cells
+        continue
+      }
+      if (used > 0) rows += 1
+      const spill = Math.max(0, Math.ceil(cells / cols) - 1)
+      rows += spill
+      used = cells - spill * cols
+    }
+  }
+  return rows
+}
+
+/**
+ * The newest items that fit in `rows`, oldest dropped first, as a log pinned to
+ * its bottom shows them. When even the newest is taller, it alone, its text cut
+ * from the front (see `tailText`).
+ */
+export function fitTail<T extends { text: string }>(items: readonly T[], rows: number, width: number): T[] {
+  const shown: T[] = []
+  let used = 0
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i]!
+    const height = wrappedRows(item.text, width)
+    if (used + height > rows) {
+      if (shown.length === 0) shown.push({ ...item, text: tailText(item.text, rows, width) })
+      break
+    }
+    shown.unshift(item)
+    used += height
+  }
+  return shown
+}
+
+/** `text` cut from the front, behind an ellipsis, until it wraps into `rows` rows of `width` cells. */
+export function tailText(text: string, rows: number, width: number): string {
+  if (wrappedRows(text, width) <= rows) return text
+  const chars = [...text]
+  for (let keep = Math.max(1, rows * Math.max(1, Math.floor(width)) - 1); keep > 0; keep -= 1) {
+    const tail = `…${chars.slice(-keep).join('').trimStart()}`
+    if (wrappedRows(tail, width) <= rows) return tail
+  }
+  return '…'
 }

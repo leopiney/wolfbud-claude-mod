@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { formatSnapshot, splitBridgeOutput } from '../hooks/activity'
+import { fitTail, formatSnapshot, splitBridgeOutput, tailText, wrappedRows } from '../hooks/activity'
 
 const FROM_COMPOSER = {
   origin: { kind: 'composer' as const },
@@ -315,9 +315,51 @@ describe('the pane', () => {
       await ui.unmount()
     })
   }
+
+  test('a long call keeps the newest lines and the buttons in view (terminal)', { timeoutMs: 20_000 }, async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const bridge = fakeBridge(on)
+    await startWolfbud($, bridge)
+    bridge.say({ t: 'status', call: 'live', mode: 'listening' })
+    for (let i = 1; i <= 12; i += 1) {
+      bridge.say({ t: 'line', role: i % 2 === 1 ? 'user' : 'agent', text: `line ${i}: a sentence long enough to wrap onto a second row of the pane` })
+    }
+    await bridge.settle()
+
+    // 12 rows: 5 for the header, margins and buttons, 7 for lines of 2 rows each at 39 cells.
+    const props = { ...PANE_PROPS, bodyColumns: 48, scroll: { offset: 0, bodyRows: 12 } }
+    const ui = await $.ui.mount({ plugin: 'wolfbud', surface: 'terminal', component: 'Pane', requestId: 'wolfbud', props })
+    const drawn = JSON.stringify(await ui.drawn())
+    expect(drawn).toContain('line 12:')
+    expect(drawn).toContain('line 10:')
+    expect(drawn).not.toContain('line 9:')
+    expect(await ui.find({ key: 'end' })).toBeDefined()
+    expect(await ui.find({ key: 'window' })).toBeDefined()
+    bridge.close()
+    await ui.unmount()
+  })
 })
 
 describe('helpers', () => {
+  test('wrapped rows break between words, and inside a word wider than a row', () => {
+    expect(wrappedRows('', 10)).toBe(1)
+    expect(wrappedRows('fits in ten', 11)).toBe(1)
+    expect(wrappedRows('fits in ten', 10)).toBe(2)
+    expect(wrappedRows('one two three four', 9)).toBe(3)
+    expect(wrappedRows('abcdefghijklmnopqrstuvwxy', 10)).toBe(3)
+    expect(wrappedRows('first\nsecond', 40)).toBe(2)
+  })
+
+  test('the transcript keeps the newest lines that fit, and cuts a lone tall one from the front', () => {
+    const lines = [1, 2, 3, 4].map(id => ({ id, text: `line ${id} wraps here` }))
+    expect(fitTail(lines, 5, 10).map(line => line.id)).toEqual([3, 4])
+    expect(fitTail(lines, 100, 10).map(line => line.id)).toEqual([1, 2, 3, 4])
+    const [only] = fitTail([{ id: 1, text: 'word '.repeat(40).trim() }], 2, 10)
+    expect(only?.text.startsWith('…')).toBe(true)
+    expect(wrappedRows(only?.text ?? '', 10)).toBeLessThanOrEqual(2)
+    expect(tailText('short', 1, 10)).toBe('short')
+  })
+
   test('bridge output splits on WOLFBUD lines and keeps a partial tail', () => {
     const { messages, rest } = splitBridgeOutput('noise\nWOLFBUD {"t":"window","open":true,"count":1}\nWOLFBUD {"t":"li')
     expect(messages).toEqual([{ t: 'window', open: true, count: 1 }])

@@ -13,9 +13,13 @@ import type { Wolf } from './wolf'
 const RECENT_LIMIT = 150
 const LOST_BRIDGE_MS = 20_000
 const ANNOUNCE_KEY = 'wolfbud.announce'
+const BADGE_MAX = 236
+const BADGE_MIN = 64
+const RING_OUTSET = 7
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const app = $('app')
+const stage = $('stage')
 const statusText = $('status')
 const claudeText = $('claude-status')
 const agentCaption = $('caption-agent')
@@ -35,6 +39,7 @@ let busySince = 0
 let wolf: Wolf | null = null
 let lostAt: number | null = null
 let activityTimer: number | null = null
+let badgeSize = BADGE_MAX
 
 function readAnnounce(): boolean {
   try {
@@ -225,6 +230,24 @@ muteButton.addEventListener('click', () => {
 })
 $('badge').addEventListener('click', () => wolf?.pet())
 
+// Captions and feed rows wrap and take the rows they need: the wolf shrinks into what's
+// left, and steps aside while even the smallest wolf won't fit.
+function fitBadge(): void {
+  const gap = parseFloat(getComputedStyle(stage).rowGap) || 0
+  const tall = stage.clientHeight - statusText.offsetHeight - gap - 2 * RING_OUTSET
+  const wide = stage.clientWidth - 2 * RING_OUTSET
+  const size = Math.floor(Math.min(BADGE_MAX, tall, wide))
+  app.dataset.wolf = size < BADGE_MIN ? 'hidden' : 'shown'
+  if (size < BADGE_MIN || size === badgeSize) return
+  badgeSize = size
+  app.style.setProperty('--badge', `${size}px`)
+  wolf?.resize(size - 16)
+}
+
+const fitObserver = new ResizeObserver(fitBadge)
+fitObserver.observe(stage)
+fitObserver.observe(statusText)
+
 // The wolf follows the call: jaw on the agent's voice, tilt on the user's.
 function animate(): void {
   requestAnimationFrame(animate)
@@ -246,8 +269,9 @@ window.addEventListener('beforeunload', () => {
   void call.end()
 })
 
-void createWolf($('wolf'), './wolf-head.glb', 220).then(created => {
+void createWolf($('wolf'), './wolf-head.glb', badgeSize - 16).then(created => {
   wolf = created
+  wolf?.resize(badgeSize - 16)
   wolf?.mood('asleep')
   animate()
 })
