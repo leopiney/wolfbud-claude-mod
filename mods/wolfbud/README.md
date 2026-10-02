@@ -26,13 +26,13 @@ Claude Code ── wolfbud mod (hooks/register.tsx) ─────────�
 
 ## Setup (once)
 
-From the repo root:
+With `ELEVENLABS_API_KEY` exported, from the repo root:
 
 ```bash
 pnpm install
 pnpm window:build                                    # builds the window into bridge/window
-ELEVENLABS_API_KEY=… pnpm agent:sync                 # creates/updates the agent, writes elevenlabs/agent-id.json
-ELEVENLABS_API_KEY=… pnpm agent:simulate             # optional: a simulated call, no mic needed
+pnpm agent:sync                                      # creates/updates the agent, writes elevenlabs/agent-id.json
+pnpm agent:simulate                                  # optional: a simulated call, no mic needed
 ```
 
 ## Install
@@ -41,9 +41,10 @@ The repo is a local marketplace (`.claude-plugin/marketplace.json`), so it insta
 
 ```bash
 git clone https://github.com/leopiney/wolfbud-claude-mod
-claude plugin marketplace add ./wolfbud-claude-mod
+cd wolfbud-claude-mod
+claude plugin marketplace add "$(pwd)"               # needs an absolute path, "." fails
 claude plugin install wolfbud@elevenlabs-mods
-echo '{"api_key":"sk_…"}' | claude plugin configure wolfbud@elevenlabs-mods --values-stdin   # kept in secure storage
+printf '{"api_key":"%s"}' "$ELEVENLABS_API_KEY" | claude plugin configure wolfbud@elevenlabs-mods --values-stdin   # kept in secure storage
 ```
 
 Restart Claude Code. The install is a copy cached by version, so to ship a change:
@@ -56,7 +57,7 @@ Restart Claude Code. The install is a copy cached by version, so to ship a chang
 While developing, load the repo copy instead (it hot-reloads):
 
 ```bash
-ELEVENLABS_API_KEY=… claude --plugin-dir ./mods/wolfbud
+claude --plugin-dir ./mods/wolfbud
 ```
 
 ## Use

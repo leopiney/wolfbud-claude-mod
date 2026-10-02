@@ -30,18 +30,18 @@ The mod itself is in [`mods/wolfbud`](mods/wolfbud); its [README](mods/wolfbud/R
 
 ## 🚀 Quick start
 
-You need Claude Code ≥ 2.1.287, Node, [pnpm](https://pnpm.io), Google Chrome (macOS tested) and an [ElevenLabs API key](https://elevenlabs.io/app/settings/api-keys).
+You need Claude Code ≥ 2.1.287, Node, [pnpm](https://pnpm.io), Google Chrome (macOS tested) and an [ElevenLabs API key](https://elevenlabs.io/app/settings/api-keys) exported as `ELEVENLABS_API_KEY`.
 
 ```bash
 git clone https://github.com/leopiney/wolfbud-claude-mod
 cd wolfbud-claude-mod
 pnpm install
 pnpm window:build                          # the call window, served by the mod's local bridge
-ELEVENLABS_API_KEY=… pnpm agent:sync       # creates the voice agent in your ElevenLabs account
+pnpm agent:sync                            # creates the voice agent in your ElevenLabs account
 
-claude plugin marketplace add .
+claude plugin marketplace add "$(pwd)"     # needs an absolute path, "." fails
 claude plugin install wolfbud@elevenlabs-mods
-echo '{"api_key":"sk_…"}' | claude plugin configure wolfbud@elevenlabs-mods --values-stdin
+printf '{"api_key":"%s"}' "$ELEVENLABS_API_KEY" | claude plugin configure wolfbud@elevenlabs-mods --values-stdin
 ```
 
 Restart Claude Code, then:
@@ -52,7 +52,7 @@ Restart Claude Code, then:
 | `/wolfbud call` | open them and start the call |
 | `/wolfbud end` | hang up |
 
-Try it from the repo without installing: `ELEVENLABS_API_KEY=… claude --plugin-dir ./mods/wolfbud`.
+Try it from the repo without installing: `claude --plugin-dir ./mods/wolfbud`.
 
 ## 🔐 Your key, your agent
 
