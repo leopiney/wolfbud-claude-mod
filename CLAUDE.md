@@ -1,4 +1,4 @@
-# claude-mode-elevenlabs
+# wolfbud-claude-mod
 
 Claude Code mods (function-hook plugins, Claude Code >= 2.1.287) that use ElevenLabs.
 

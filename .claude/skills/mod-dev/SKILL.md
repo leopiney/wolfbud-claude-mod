@@ -24,7 +24,7 @@ mods/<mod-name>/
 └── README.md                # what it does + the Claude Code version it was tested on
 ```
 
-- **Name rule:** `plugin.json` `name` must not look like Anthropic's (`claude-*` fails validation). The repo is called `claude-mode-elevenlabs`, but a mod can't use that name.
+- **Name rule:** `plugin.json` `name` must not look like Anthropic's (`claude-*` fails validation). The repo is called `wolfbud-claude-mod`; the mod inside is just `wolfbud`.
 - Write into `~/.claude/dev-mods/` only if the user explicitly wants a quick hot-reloaded prototype in the current session without restarting. Copy the result into `mods/` before ending.
 
 ## Loading it

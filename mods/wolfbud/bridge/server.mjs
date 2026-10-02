@@ -140,7 +140,7 @@ async function mintToken() {
   }
   const id = agentId()
   if (!id) {
-    return [503, { error: 'no_agent', message: 'No agent yet: run `pnpm agent:sync` in the claude-mode-elevenlabs repo.' }]
+    return [503, { error: 'no_agent', message: 'No agent yet: run `pnpm agent:sync` in the wolfbud-claude-mod repo.' }]
   }
   const res = await fetch(`${ELEVENLABS}/convai/conversation/token?agent_id=${encodeURIComponent(id)}`, {
     headers: { 'xi-api-key': API_KEY },
@@ -161,7 +161,7 @@ async function serveStatic(res, pathname) {
   if (!isWindowBuilt()) {
     res.writeHead(503, { 'content-type': 'text/html; charset=utf-8' })
     res.end('<!doctype html><title>WolfBud</title><body style="font:15px system-ui;padding:24px;background:#141428;color:#e8e8ff">'
-      + '<h2>The WolfBud window isn’t built yet</h2><p>In the claude-mode-elevenlabs repo run <code>pnpm install &amp;&amp; pnpm window:build</code>, then reload.</p>')
+      + '<h2>The WolfBud window isn’t built yet</h2><p>In the wolfbud-claude-mod repo run <code>pnpm install &amp;&amp; pnpm window:build</code>, then reload.</p>')
     return
   }
   const file = resolve(WINDOW_DIR, `.${pathname === '/' ? '/index.html' : decodeURIComponent(pathname)}`)

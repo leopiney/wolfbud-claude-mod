@@ -40,7 +40,8 @@ ELEVENLABS_API_KEY=… pnpm agent:simulate             # optional: a simulated c
 The repo is a local marketplace (`.claude-plugin/marketplace.json`), so it installs into every session, desktop app included:
 
 ```bash
-claude plugin marketplace add /path/to/claude-mode-elevenlabs
+git clone https://github.com/leopiney/wolfbud-claude-mod
+claude plugin marketplace add ./wolfbud-claude-mod
 claude plugin install wolfbud@elevenlabs-mods
 echo '{"api_key":"sk_…"}' | claude plugin configure wolfbud@elevenlabs-mods --values-stdin   # kept in secure storage
 ```

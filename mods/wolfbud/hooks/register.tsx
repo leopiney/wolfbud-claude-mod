@@ -355,8 +355,8 @@ function problems(b: WolfbudBridge): string[] {
   if (b.status !== 'ready') return []
   const found: string[] = []
   if (!b.hasApiKey) found.push('No ElevenLabs API key: set ELEVENLABS_API_KEY (or the api_key option) and restart Claude Code.')
-  if (!b.hasAgent) found.push('No agent yet: run `pnpm agent:sync` in the claude-mode-elevenlabs repo.')
-  if (!b.isWindowBuilt) found.push('The window is not built: run `pnpm window:build` in the claude-mode-elevenlabs repo.')
+  if (!b.hasAgent) found.push('No agent yet: run `pnpm agent:sync` in the wolfbud-claude-mod repo.')
+  if (!b.isWindowBuilt) found.push('The window is not built: run `pnpm window:build` in the wolfbud-claude-mod repo.')
   return found
 }
 
