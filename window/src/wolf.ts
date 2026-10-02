@@ -1,7 +1,7 @@
 // The WolfBud head: wolfbud's WolfHead.vue (~/workspace/wolfbud) without Vue
 // or Tauri. Same model, framing, lights, idle sway, pet nod and jaw; the jaw
-// follows the agent's voice level, and the head tilts toward the user while
-// they talk.
+// follows the agent's voice level, the head turns to look at the pointer, and
+// it tilts toward the user while they talk.
 
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -11,12 +11,6 @@ const BASE_AZ = THREE.MathUtils.degToRad(-42)
 const BASE_EL = THREE.MathUtils.degToRad(29)
 const DRIFT_AZ = THREE.MathUtils.degToRad(4)
 const DRIFT_EL = THREE.MathUtils.degToRad(2.5)
-const POINTER_AZ = THREE.MathUtils.degToRad(6)
-const POINTER_EL = THREE.MathUtils.degToRad(4)
-const POINTER_RANGE = 300
-/** Yaw is one-sided: the snout is +Z, so only a rightward turn keeps the 3/4 pose. */
-const LOOK_YAW = THREE.MathUtils.degToRad(24)
-const LOOK_PITCH = THREE.MathUtils.degToRad(9)
 const IDLE_PITCH = 0.025
 const IDLE_ROLL = 0.03
 const IDLE_BOB = 0.012
@@ -37,6 +31,18 @@ const LISTEN_ROLL = THREE.MathUtils.degToRad(7)
 const LISTEN_PITCH = THREE.MathUtils.degToRad(-4)
 /** Asleep (no call): the head sinks and the sway slows. */
 const SLEEP_PITCH = THREE.MathUtils.degToRad(6)
+/**
+ * Looking at the pointer: the snout aims at it, easing out to LOOK_MAX off the
+ * line to the viewer (three quarters of it at LOOK_RANGE px from the head, about
+ * all of it at the window's corners); it tilts a little toward the pointer's
+ * side, and eases back to the 3/4 rest pose when the pointer leaves.
+ */
+const LOOK_MAX = THREE.MathUtils.degToRad(42)
+const LOOK_RANGE = 220
+const LOOK_TILT = THREE.MathUtils.degToRad(6)
+const LOOK_TAU = 0.16
+const ORIGIN = new THREE.Vector3()
+const UP = new THREE.Vector3(0, 1, 0)
 
 export type WolfMood = 'asleep' | 'awake' | 'listening' | 'speaking'
 
@@ -105,16 +111,48 @@ export async function createWolf(host: HTMLElement, modelUrl: string, size: numb
   let nodVel = 0
   let pointerX = 0
   let pointerY = 0
-  let smoothPointerX = 0
-  let smoothPointerY = 0
+  let hasPointer = false
+  let tilt = 0
   let raf = 0
   let lastFrame = 0
   const startedAt = performance.now()
+  const look = new THREE.Quaternion()
+  const lookTarget = new THREE.Quaternion()
+  const expression = new THREE.Quaternion()
+  const expressionEuler = new THREE.Euler()
+
+  /** Unit vector from the head toward a camera at azimuth `az`, elevation `el`. */
+  function cameraDirection(az: number, el: number, out: THREE.Vector3): THREE.Vector3 {
+    const cosEl = Math.cos(el)
+    return out.set(Math.sin(az) * cosEl, Math.sin(el), Math.cos(az) * cosEl)
+  }
 
   function placeCamera(az: number, el: number) {
-    const cosEl = Math.cos(el)
-    camera.position.set(Math.sin(az) * cosEl, Math.sin(el), Math.cos(az) * cosEl).multiplyScalar(CAM_DIST)
+    cameraDirection(az, el, camera.position).multiplyScalar(CAM_DIST)
     camera.lookAt(0, 0, 0)
+  }
+
+  // The rest view's axes in world space: screen right, screen up, and back toward the viewer.
+  const viewRight = new THREE.Vector3()
+  const viewUp = new THREE.Vector3()
+  const viewBack = new THREE.Vector3()
+  new THREE.Matrix4()
+    .lookAt(cameraDirection(BASE_AZ, BASE_EL, new THREE.Vector3()), ORIGIN, UP)
+    .extractBasis(viewRight, viewUp, viewBack)
+  const aim = new THREE.Vector3()
+  const aimBasis = new THREE.Matrix4()
+
+  /** The upright rotation that points the snout (+Z) at a pointer `dx`, `dy` px (screen axes) from the head. */
+  function aimAt(dx: number, dy: number, out: THREE.Quaternion): THREE.Quaternion {
+    const dist = Math.hypot(dx, dy)
+    const angle = LOOK_MAX * Math.tanh(dist / LOOK_RANGE)
+    const side = dist > 0 ? Math.sin(angle) / dist : 0
+    aim
+      .copy(viewBack)
+      .multiplyScalar(Math.cos(angle))
+      .addScaledVector(viewRight, dx * side)
+      .addScaledVector(viewUp, -dy * side)
+    return out.setFromRotationMatrix(aimBasis.lookAt(aim, ORIGIN, UP))
   }
 
   function collectPoints(): THREE.Vector3[] {
@@ -148,22 +186,31 @@ export async function createWolf(host: HTMLElement, modelUrl: string, size: numb
     model.rotation.copy(restRotation)
     model.position.copy(restPosition)
 
-    const maxPitch = LOOK_PITCH + NOD_ANGLE * NOD_MAX + IDLE_PITCH + TALK_LIFT + SLEEP_PITCH
-    const maxRoll = IDLE_ROLL + NOD_WAG * NOD_KICK * NOD_REPEAT + LISTEN_ROLL
-    const swingAz = DRIFT_AZ * 1.4 + POINTER_AZ
-    const swingEl = DRIFT_EL * 1.4 + POINTER_EL
+    const maxPitch = NOD_ANGLE * NOD_MAX + IDLE_PITCH + TALK_LIFT + SLEEP_PITCH
+    const maxRoll = IDLE_ROLL + NOD_WAG * NOD_KICK * NOD_REPEAT + LISTEN_ROLL + LOOK_TILT
+    const swingAz = DRIFT_AZ * 1.4
+    const swingEl = DRIFT_EL * 1.4
+    // Every way it looks: at rest, at the viewer, and at a pointer near and far, all around.
+    const looks = [new THREE.Quaternion(), aimAt(0, 0, new THREE.Quaternion())]
+    for (const reach of [LOOK_RANGE, LOOK_RANGE * 1e4]) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI) / 4
+        looks.push(aimAt(Math.cos(a) * reach, Math.sin(a) * reach, new THREE.Quaternion()))
+      }
+    }
     const pose = new THREE.Matrix4()
     const euler = new THREE.Euler()
+    const turn = new THREE.Quaternion()
     const project = new THREE.Matrix4()
     const v = new THREE.Vector3()
     let minX = Infinity
     let maxX = -Infinity
     let minY = Infinity
     let maxY = -Infinity
-    for (const yaw of [0, LOOK_YAW / 2, LOOK_YAW]) {
+    for (const lookAt of looks) {
       for (const pitch of [-maxPitch, 0, maxPitch]) {
         for (const roll of [-maxRoll, maxRoll]) {
-          pose.makeRotationFromEuler(euler.set(pitch, yaw, roll))
+          pose.makeRotationFromQuaternion(turn.setFromEuler(euler.set(pitch, 0, roll)).premultiply(lookAt))
           for (const az of [BASE_AZ - swingAz, BASE_AZ, BASE_AZ + swingAz]) {
             for (const el of [BASE_EL - swingEl, BASE_EL, BASE_EL + swingEl]) {
               placeCamera(az, el)
@@ -224,27 +271,31 @@ export async function createWolf(host: HTMLElement, modelUrl: string, size: numb
       nodPos = THREE.MathUtils.clamp(nodPos + nodVel * h, -NOD_MAX, NOD_MAX)
     }
 
-    const p = smoothing(dt, 0.18)
-    smoothPointerX += (pointerX - smoothPointerX) * p
-    smoothPointerY += (pointerY - smoothPointerY) * p
+    // Look: ease toward the pointer (or back to rest), then layer the sway, nod and moods on top.
+    const p = smoothing(dt, LOOK_TAU)
+    if (hasPointer) aimAt(pointerX, pointerY, lookTarget)
+    else lookTarget.identity()
+    look.slerp(lookTarget, p)
+    tilt += ((hasPointer ? saturate(pointerX / LOOK_RANGE) * LOOK_TILT : 0) - tilt) * p
 
     if (model) {
       const sway = 1 - sleep * 0.6
-      model.rotation.y = smoothPointerX * LOOK_YAW
-      model.rotation.x =
+      expressionEuler.set(
         Math.sin(t * 0.53 * sway + 1.3) * IDLE_PITCH -
-        jawValue * TALK_LIFT +
-        smoothPointerY * LOOK_PITCH +
-        nodPos * NOD_ANGLE +
-        listen * LISTEN_PITCH +
-        sleep * SLEEP_PITCH
-      model.rotation.z = Math.sin(t * 0.7 * sway) * IDLE_ROLL + nodVel * NOD_WAG + listen * LISTEN_ROLL
+          jawValue * TALK_LIFT +
+          nodPos * NOD_ANGLE +
+          listen * LISTEN_PITCH +
+          sleep * SLEEP_PITCH,
+        0,
+        Math.sin(t * 0.7 * sway) * IDLE_ROLL + nodVel * NOD_WAG + listen * LISTEN_ROLL - tilt,
+      )
+      model.quaternion.copy(look).multiply(expression.setFromEuler(expressionEuler))
       model.position.y = Math.sin(t * 0.9 * sway) * IDLE_BOB
     }
 
     placeCamera(
-      BASE_AZ + Math.sin(t * 0.31) * DRIFT_AZ + Math.sin(t * 0.13 + 2) * DRIFT_AZ * 0.4 - smoothPointerX * POINTER_AZ,
-      BASE_EL + Math.sin(t * 0.23 + 1) * DRIFT_EL + smoothPointerY * POINTER_EL,
+      BASE_AZ + Math.sin(t * 0.31) * DRIFT_AZ + Math.sin(t * 0.13 + 2) * DRIFT_AZ * 0.4,
+      BASE_EL + Math.sin(t * 0.23 + 1) * DRIFT_EL,
     )
     renderer.render(scene, camera)
   }
@@ -262,12 +313,12 @@ export async function createWolf(host: HTMLElement, modelUrl: string, size: numb
 
   const onPointerMove = (event: MouseEvent) => {
     const r = renderer.domElement.getBoundingClientRect()
-    pointerX = Math.max(0, saturate((event.clientX - (r.left + r.width / 2)) / POINTER_RANGE))
-    pointerY = saturate((event.clientY - (r.top + r.height / 2)) / POINTER_RANGE)
+    pointerX = event.clientX - (r.left + r.width / 2)
+    pointerY = event.clientY - (r.top + r.height / 2)
+    hasPointer = true
   }
   const onPointerLeave = () => {
-    pointerX = 0
-    pointerY = 0
+    hasPointer = false
   }
   const onVisibility = () => (document.hidden ? stop() : start())
   window.addEventListener('mousemove', onPointerMove)
