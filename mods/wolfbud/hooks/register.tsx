@@ -24,10 +24,12 @@ const MAX_LINES = 80
 // label and a 1-cell gap.
 const PANE_CHROME_ROWS = 5
 const LINE_INDENT = 9
+const ORCA_CLIS = ['orca', '/Applications/Orca.app/Contents/Resources/bin/orca']
 const USAGE = 'Usage: /wolfbud [call | end | window | stop | status]'
 const LEAD = 'The user asked WolfBud, the voice assistant on a call beside this session, to pass this on:'
 
-type Settings = { apiKey: string; port: number; browser: 'chrome-app' | 'default' }
+type Browser = 'chrome-app' | 'orca-browser' | 'terminal-browser' | 'default'
+type Settings = { apiKey: string; port: number; browser: Browser }
 type BridgeStream = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 type SendRequest = Extract<BridgeMessage, { t: 'send' }>
 type StopRequest = Extract<BridgeMessage, { t: 'stop' }>
@@ -58,12 +60,18 @@ let child: BridgeStream | null = null
 /** Open the window (and maybe start a call) once the bridge says it's ready. */
 let pendingWindow: { withCall: boolean } | null = null
 
+function readBrowser(value: unknown): Browser | null {
+  return value === 'default' || value === 'terminal-browser' || value === 'orca-browser' || value === 'chrome-app'
+    ? value
+    : null
+}
+
 function readSettings(options: PluginOptions): Settings {
   const port = Number(options.port)
   return {
     apiKey: typeof options.api_key === 'string' ? options.api_key.trim() : '',
     port: Number.isInteger(port) && port > 0 && port < 65_536 ? port : DEFAULT_PORT,
-    browser: options.browser === 'default' ? 'default' : 'chrome-app',
+    browser: readBrowser(options.browser) ?? 'chrome-app',
   }
 }
 
@@ -280,7 +288,31 @@ async function stopClaude($: EngineInterface, request: StopRequest): Promise<voi
 async function openWindow($: EngineInterface, withCall: boolean): Promise<void> {
   const current = await read($, bridge)
   const url = `http://127.0.0.1:${current.port}/#k=${current.key}${withCall ? '&call=1' : ''}`
-  if (settings.browser === 'chrome-app') {
+  // WOLFBUD_BROWSER wins over the option: a --plugin-dir session has no stored options.
+  const browser = readBrowser(await $.env.get('WOLFBUD_BROWSER')) ?? settings.browser
+  if (browser === 'orca-browser') {
+    // Orca sets ORCA_WORKTREE_ID in the terminals it manages; without it this session
+    // isn't in Orca and `orca tab create` has no worktree to open the tab in.
+    if (!(await $.env.get('ORCA_WORKTREE_ID'))) {
+      $.ui.toast('WolfBud: this session is not running in Orca (no ORCA_WORKTREE_ID); using a Chrome window')
+    } else {
+      // A tab in Orca's built-in browser, in this session's worktree. The CLI on PATH
+      // can be a dead symlink (/usr/local/bin/orca), so the bundled binary is the second try.
+      for (const orca of ORCA_CLIS) {
+        const opened = await $.process.run([orca, 'tab', 'create', '--url', url, '--json'], { timeoutMs: 20_000 }).catch(() => null)
+        if (opened?.exitCode === 0) return
+      }
+      $.ui.toast("WolfBud: Orca's browser did not open; using a Chrome window")
+    }
+  }
+  if (browser === 'terminal-browser') {
+    // A split pane in this terminal tab (or a tab in the browser already there).
+    // Without a TTY, new-tab opens the split itself.
+    const opened = await $.process.run(['terminal-browser', 'new-tab', url], { timeoutMs: 20_000 }).catch(() => null)
+    if (opened?.exitCode === 0) return
+    $.ui.toast('WolfBud: terminal-browser did not open (installed? https://terminal-browser.sh); using a Chrome window')
+  }
+  if (browser !== 'default') {
     // Its own profile: an app window, a mic grant that sticks, and an autoplay
     // policy that lets a call start from the pane without a click in the window.
     const home = (await $.env.get('HOME')) ?? ''

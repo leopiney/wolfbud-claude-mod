@@ -81,9 +81,35 @@ The pane's buttons (`c` call, `e` end, `w` window) do the same. In the fullscree
 | --- | --- | --- |
 | `api_key` | `$ELEVENLABS_API_KEY` | Used by the bridge to mint call tokens. Sensitive. |
 | `port` | 4747 | Preferred bridge port; the next nine are tried. Keep it stable: the mic grant is per origin. |
-| `browser` | `chrome-app` | `default` opens your default browser instead. You then click Call in the window. |
+| `browser` | `chrome-app` | `orca-browser` opens the window as a tab in Orca's built-in browser, `terminal-browser` in a split pane of your terminal (see below). `default` opens your default browser instead; you then click Call in the window. |
 
-Env overrides: `WOLFBUD_AGENT_ID` (else `elevenlabs/agent-id.json`), `WOLFBUD_NODE` (else `node` on PATH).
+### In Orca (orca-browser)
+
+WolfBud is optimized for the [Orca](https://orca.build) terminal: with `browser` set to `orca-browser`, the window opens as a tab in Orca's built-in browser, next to the session, instead of a separate Chrome window.
+
+```bash
+WOLFBUD_BROWSER=orca-browser claude --plugin-dir ./mods/wolfbud   # or set the `browser` option
+```
+
+**Orca setup.** What has to be true for it to work:
+
+- **Run Claude Code in a terminal Orca manages, with Orca running.** Orca sets `ORCA_WORKTREE_ID` in those terminals, and WolfBud looks for it at launch. It's the only thing checked; if it's missing, WolfBud toasts that the session isn't in Orca and opens the Chrome app window instead.
+- **The `orca` CLI has to work.** WolfBud runs `orca tab create --url <url> --json`, trying `orca` on PATH first and then `/Applications/Orca.app/Contents/Resources/bin/orca` (the PATH one can be a dead symlink). If both fail it falls back to the Chrome app window.
+- **No Orca skills are required.** WolfBud only calls the CLI. The bundled `orca-cli` skill matters only if you want an agent to drive the tab (`orca skills install` adds it).
+- **Allow the microphone for Orca.** The window needs `getUserMedia`. On macOS that means Orca under System Settings → Privacy & Security → Microphone, and allowing the prompt for the tab if it asks. Orca has no WolfBud-specific permission setting, and I haven't confirmed how it persists the grant per origin. Keep `port` stable so the origin doesn't change.
+- **Click Call in the tab if the pane can't start it.** Orca's browser can't take Chrome's autoplay flag, so the pane's call button may not start audio on its own.
+
+Not tested yet on Claude Code 2.1.288.
+
+### In your terminal (terminal-browser)
+
+With [terminal-browser](https://github.com/zenbu-labs/terminal-browser) installed, WolfBud's window can open as a split pane next to Claude Code instead of a floating Chrome window. It runs `terminal-browser new-tab <url>`, and falls back to the Chrome app window if that fails. It needs a terminal terminal-browser supports (kitty graphics: Ghostty, kitty, cmux, tmux, herdr, WezTerm, VS Code). The mic must be allowed for terminal-browser's browser. Not tested yet on Claude Code 2.1.288.
+
+```bash
+WOLFBUD_BROWSER=terminal-browser claude --plugin-dir ./mods/wolfbud   # or set the `browser` option
+```
+
+Env overrides: `WOLFBUD_BROWSER` (`chrome-app`, `orca-browser`, `terminal-browser` or `default`, wins over the option), `WOLFBUD_AGENT_ID` (else `elevenlabs/agent-id.json`), `WOLFBUD_NODE` (else `node` on PATH).
 
 ## Changing the agent
 

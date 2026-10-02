@@ -28,6 +28,8 @@
 
 The mod itself is in [`mods/wolfbud`](mods/wolfbud); its [README](mods/wolfbud/README.md) has the full architecture, commands and options.
 
+> 🪐 **Optimized for [Orca](https://orca.build).** Run Claude Code in an Orca terminal and WolfBud can open its window as a tab in Orca's built-in browser (`browser: orca-browser`). Orca needs mic access allowed; see [In Orca](mods/wolfbud/README.md#in-orca-orca-browser) for the setup. Outside Orca, or if that fails, it opens a Chrome app window.
+
 ## 🚀 Quick start
 
 You need Claude Code ≥ 2.1.287, Node, [pnpm](https://pnpm.io), Google Chrome (macOS tested) and an [ElevenLabs API key](https://elevenlabs.io/app/settings/api-keys) exported as `ELEVENLABS_API_KEY`.

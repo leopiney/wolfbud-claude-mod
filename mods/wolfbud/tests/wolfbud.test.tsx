@@ -16,7 +16,7 @@ type Post = { path: string; body: Record<string, unknown> }
  * `WOLFBUD` line on its stdout, and every POST, spawn and `open` is recorded.
  * Promises from `until` settle as soon as what they wait for has happened.
  */
-function fakeBridge(on: On) {
+function fakeBridge(on: On, { failing = [] }: { failing?: string[] } = {}) {
   const spawned: Array<{ argv: readonly string[]; env: Record<string, string> }> = []
   const posts: Post[] = []
   const runs: string[][] = []
@@ -61,7 +61,8 @@ function fakeBridge(on: On) {
   on('process.run', (_$, e) => {
     runs.push([...e.argv])
     notify()
-    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    const exitCode = failing.includes(e.argv[0] ?? '') ? 1 : 0
+    return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   mock.clock(on, { now: 1_700_000_000_000 })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
@@ -140,6 +141,93 @@ describe('the bridge', () => {
 
     const session = bridge.postsTo('/api/claude')[0]?.body
     expect(session).toMatchObject({ isClaudeBusy: false })
+    bridge.close()
+  })
+
+  test('the browser option terminal-browser opens the window in a terminal split', { options: { browser: 'terminal-browser' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
+    expect(bridge.runs).toEqual([['terminal-browser', 'new-tab', `http://127.0.0.1:4747/#k=${key}`]])
+    bridge.close()
+  })
+
+  test('WOLFBUD_BROWSER=terminal-browser wins over the option', async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_BROWSER: 'terminal-browser' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    expect(bridge.runs[0]?.slice(0, 2)).toEqual(['terminal-browser', 'new-tab'])
+    bridge.close()
+  })
+
+  test('terminal-browser failing falls back to the Chrome app window', { options: { browser: 'terminal-browser' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+    const bridge = fakeBridge(on, { failing: ['terminal-browser'] })
+
+    await startWolfbud($, bridge)
+    await bridge.until(() => bridge.runs.length === 2)
+
+    expect(bridge.runs[0]?.[0]).toBe('terminal-browser')
+    expect(bridge.runs[1]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
+    bridge.close()
+  })
+
+  test('the browser option orca-browser opens the window in an Orca browser tab', { options: { browser: 'orca-browser' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
+    expect(bridge.runs).toEqual([['orca', 'tab', 'create', '--url', `http://127.0.0.1:4747/#k=${key}`, '--json']])
+    bridge.close()
+  })
+
+  test('orca-browser tries the bundled CLI when orca on PATH fails', { options: { browser: 'orca-browser' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
+    const bridge = fakeBridge(on, { failing: ['orca'] })
+
+    await startWolfbud($, bridge)
+    await bridge.until(() => bridge.runs.length === 2)
+
+    expect(bridge.runs[1]?.slice(0, 3)).toEqual(['/Applications/Orca.app/Contents/Resources/bin/orca', 'tab', 'create'])
+    bridge.close()
+  })
+
+  test('orca-browser failing falls back to the Chrome app window', { options: { browser: 'orca-browser' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
+    const bridge = fakeBridge(on, { failing: ['orca', '/Applications/Orca.app/Contents/Resources/bin/orca'] })
+
+    await startWolfbud($, bridge)
+    await bridge.until(() => bridge.runs.length === 3)
+
+    expect(bridge.runs[2]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
+    bridge.close()
+  })
+
+  test('orca-browser outside Orca skips the CLI and opens the Chrome app window', { options: { browser: 'orca-browser' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    expect(bridge.runs).toHaveLength(1)
+    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
+    bridge.close()
+  })
+
+  test('WOLFBUD_BROWSER=orca-browser wins over the option', { options: { browser: 'default' } }, async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_BROWSER: 'orca-browser', ORCA_WORKTREE_ID: 'wt' })
+    const bridge = fakeBridge(on)
+
+    await startWolfbud($, bridge)
+
+    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['orca', 'tab', 'create'])
     bridge.close()
   })
 
