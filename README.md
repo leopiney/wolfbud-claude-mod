@@ -18,6 +18,31 @@
 > [!NOTE]
 > **Not affiliated with ElevenLabs.** This is an independent, unofficial project. It just calls the public [ElevenLabs API](https://elevenlabs.io/docs) with your own API key. "ElevenLabs" and its logo belong to ElevenLabs.
 
+## 🎬 See it in action
+
+One real 20-minute session, in which WolfBud was used to build WolfBud's own Orca support. Every change was asked for out loud, and the session pushed three commits.
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/call-sends-to-claude.jpg" alt="The WolfBud window says it sent the request; the terminal shows the prompt it wrote for Claude"></td>
+    <td width="50%"><img src="assets/screenshots/queued-while-claude-works.jpg" alt="While Claude works, WolfBud queues a follow-up request about the README"></td>
+  </tr>
+  <tr>
+    <td><b>You talk, it sends.</b> If something is unclear it asks first, then it writes the prompt and hands it to Claude.</td>
+    <td><b>Keep talking while Claude works.</b> New requests are queued for when Claude is done.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/speaks-up-when-done.jpg" alt="WolfBud tells you Claude is done and what changed"></td>
+    <td width="50%"><img src="assets/screenshots/inside-orca.jpg" alt="WolfBud in Orca's built-in browser, split beside the Claude Code session"></td>
+  </tr>
+  <tr>
+    <td><b>It speaks up when Claude is done</b>, with what changed and what is still untested.</td>
+    <td><b>Inside Orca.</b> The last call of the session ran in Orca's built-in browser, the feature it had just built.</td>
+  </tr>
+</table>
+
+The demo videos of that session (a story cut, a narrated "how it works" and a vertical teaser) come from [`video/`](video), a Remotion project.
+
 ## 🐺 What it does
 
 - 👀 **Watches the session.** Your prompts, Claude's tool calls, failures, final answers and permission prompts all reach the agent as context.
@@ -25,6 +50,10 @@
 - 📨 **Sends prompts to Claude.** When you decide something together, `wolfbud_send_to_claude` starts a turn, adds a note to the running one, or queues it for when Claude is done.
 - 🔔 **Speaks up when Claude finishes** or is waiting on a permission, after a pause so it doesn't talk over you.
 - 🛑 **Stops Claude** if you ask it to.
+
+<p align="center">
+  <img src="assets/screenshots/how-it-works.jpg" alt="How WolfBud works: Claude Code's hooks feed the wolfbud mod, which streams events to a local bridge on 127.0.0.1; the bridge talks to the WolfBud window over SSE, and the window holds the WebRTC call with the ElevenLabs voice agent. wolfbud_send_to_claude brings prompts back into Claude's chat. The API key stays in the bridge; the window only gets a per-call token." width="100%">
+</p>
 
 The mod itself is in [`mods/wolfbud`](mods/wolfbud); its [README](mods/wolfbud/README.md) has the full architecture, commands and options.
 
@@ -77,7 +106,8 @@ Try it from the repo without installing: `claude --plugin-dir ./mods/wolfbud`.
 | [`mods/wolfbud`](mods/wolfbud) | the Claude Code mod: hooks, pane, local bridge, agent definition |
 | [`window/`](window) | the call window: Vite + three.js wolf + `@elevenlabs/client` (WebRTC) |
 | [`scripts/`](scripts) | `agent:sync` (create or update the agent from code) and `agent:simulate` (a call without a mic) |
-| [`assets/`](assets) | the banner and icon above |
+| [`video/`](video) | the demo videos: a Remotion project that cuts them from a session recording, with ElevenLabs music, effects and narration |
+| [`assets/`](assets) | the banner, icon and screenshots above |
 
 ## 🔗 Related
 

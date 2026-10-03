@@ -4,3 +4,9 @@ pnpm-lock.yaml
 mods/wolfbud/bridge/window/
 # Written by Claude Code on every mod load
 mods/*/.claude-plugin/types/
+# The demo video project: generated data, cut footage and renders
+video/src/data/
+video/data/transcript.json
+video/data/scenes.json
+video/public/
+video/out/
