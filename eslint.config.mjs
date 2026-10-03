@@ -10,9 +10,8 @@ export default tseslint.config(
       'mods/wolfbud/bridge/window/',
       // Written by Claude Code on every mod load
       'mods/*/.claude-plugin/types/',
-      // Demo video renders and media
-      'video/out/',
-      'video/public/',
+      // The demo video project: local only (gitignored)
+      'video/',
     ],
   },
   js.configs.recommended,

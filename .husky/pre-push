@@ -1,0 +1,5 @@
+# The videos in assets/ are stored with Git LFS: upload them before the commits that
+# point to them. Husky owns core.hooksPath, so `git lfs install` can't add this hook.
+if command -v git-lfs >/dev/null 2>&1; then
+  git lfs pre-push "$@"
+fi

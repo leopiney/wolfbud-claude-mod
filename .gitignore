@@ -2,3 +2,5 @@
 mods/*/.claude-plugin/types/
 .DS_Store
 node_modules/
+# The demo video project (Remotion): local only. Its cuts are in assets/videos (Git LFS)
+/video/

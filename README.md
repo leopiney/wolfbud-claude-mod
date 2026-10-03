@@ -22,6 +22,12 @@
 
 One real 20-minute session, in which WolfBud was used to build WolfBud's own Orca support. Every change was asked for out loud, and the session pushed three commits.
 
+<p align="center">
+  <a href="assets/videos/wolfbud-built-by-voice.mp4?raw=true">
+    <img src="assets/videos/wolfbud-built-by-voice.jpg" alt="Watch the demo (1:37): I used WolfBud to build WolfBud. A real 20-minute session, by voice." width="100%">
+  </a>
+</p>
+
 <table>
   <tr>
     <td width="50%"><img src="assets/screenshots/call-sends-to-claude.jpg" alt="The WolfBud window says it sent the request; the terminal shows the prompt it wrote for Claude"></td>
@@ -41,7 +47,7 @@ One real 20-minute session, in which WolfBud was used to build WolfBud's own Orc
   </tr>
 </table>
 
-The demo videos of that session (a story cut, a narrated "how it works" and a vertical teaser) come from [`video/`](video), a Remotion project.
+There are two more cuts of the same session: [How it works](assets/videos/wolfbud-how-it-works.mp4?raw=true), in which WolfBud narrates itself over diagrams, and a [vertical teaser](assets/videos/wolfbud-vertical.mp4?raw=true). They were made with Remotion, with music, effects and narration by ElevenLabs.
 
 ## 🐺 What it does
 
@@ -101,8 +107,7 @@ Working on WolfBud itself? Clone the repo and run `claude --plugin-dir ./mods/wo
 | [`mods/wolfbud`](mods/wolfbud) | the Claude Code mod: hooks, pane, local bridge (which also sets up the agent), agent definition, built window |
 | [`window/`](window) | the call window: Vite + three.js wolf + `@elevenlabs/client` (WebRTC), built into the mod and committed |
 | [`scripts/`](scripts) | `agent:sync` (push the agent definition by hand), `agent:simulate` (a call without a mic) and `install-plugin` (install from a clone) |
-| [`video/`](video) | the demo videos: a Remotion project that cuts them from a session recording, with ElevenLabs music, effects and narration |
-| [`assets/`](assets) | the banner, icon and screenshots above |
+| [`assets/`](assets) | the banner, icon, screenshots and demo videos above (the videos are in Git LFS) |
 
 ## 🔗 Related
 
