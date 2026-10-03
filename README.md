@@ -22,11 +22,7 @@
 
 One real 20-minute session, in which WolfBud was used to build WolfBud's own Orca support. Every change was asked for out loud, and the session pushed three commits.
 
-<p align="center">
-  <a href="assets/videos/wolfbud-built-by-voice.mp4?raw=true">
-    <img src="assets/videos/wolfbud-built-by-voice.jpg" alt="Watch the demo (1:37): I used WolfBud to build WolfBud. A real 20-minute session, by voice." width="100%">
-  </a>
-</p>
+https://github.com/user-attachments/assets/386d7a70-b663-4d36-9273-b09d493b9531
 
 <table>
   <tr>
@@ -47,7 +43,7 @@ One real 20-minute session, in which WolfBud was used to build WolfBud's own Orc
   </tr>
 </table>
 
-There are two more cuts of the same session: [How it works](assets/videos/wolfbud-how-it-works.mp4?raw=true), in which WolfBud narrates itself over diagrams, and a [vertical teaser](assets/videos/wolfbud-vertical.mp4?raw=true). They were made with Remotion, with music, effects and narration by ElevenLabs.
+There are two more cuts of the same session: [How it works](https://github.com/user-attachments/assets/66cf45d0-0f06-4ee9-87f0-56d41ac6dc14), in which WolfBud narrates itself over diagrams, and a [vertical teaser](https://github.com/user-attachments/assets/3dc689e3-4f31-45cc-b184-cf4202280467). They were made with Remotion, with music, effects and narration by ElevenLabs.
 
 ## 🐺 What it does
 
@@ -107,7 +103,7 @@ Working on WolfBud itself? Clone the repo and run `claude --plugin-dir ./mods/wo
 | [`mods/wolfbud`](mods/wolfbud) | the Claude Code mod: hooks, pane, local bridge (which also sets up the agent), agent definition, built window |
 | [`window/`](window) | the call window: Vite + three.js wolf + `@elevenlabs/client` (WebRTC), built into the mod and committed |
 | [`scripts/`](scripts) | `agent:sync` (push the agent definition by hand), `agent:simulate` (a call without a mic) and `install-plugin` (install from a clone) |
-| [`assets/`](assets) | the banner, icon, screenshots and demo videos above (the videos are in Git LFS) |
+| [`assets/`](assets) | the banner, icon and screenshots above, and the demo videos (in Git LFS) |
 
 ## 🔗 Related
 
