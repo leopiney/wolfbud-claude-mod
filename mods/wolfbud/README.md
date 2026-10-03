@@ -24,37 +24,25 @@ Claude Code ── wolfbud mod (hooks/register.tsx) ─────────�
 
   It can also stop Claude with `wolfbud_stop_claude` (only when you ask) and look up details with `wolfbud_claude_activity`.
 
-## Setup (once)
-
-With `ELEVENLABS_API_KEY` exported, from the repo root:
-
-```bash
-pnpm install
-pnpm window:build                                    # builds the window into bridge/window
-pnpm agent:sync                                      # creates/updates the agent, writes elevenlabs/agent-id.json
-pnpm agent:simulate                                  # optional: a simulated call, no mic needed
-```
-
 ## Install
 
-`ELEVENLABS_API_KEY=… pnpm run install-plugin` from the repo root does Setup and everything below in one go (`--skip-agent` skips the agent sync, `--dry-run` lists the steps). Restart Claude Code afterwards. The manual steps:
-
-The repo is a local marketplace (`.claude-plugin/marketplace.json`), so it installs into every session, desktop app included:
+The repo is a marketplace (`.claude-plugin/marketplace.json`), so the mod installs from GitHub into every session, desktop app included. Nothing to build: the window ships built in `bridge/window`.
 
 ```bash
-git clone https://github.com/leopiney/wolfbud-claude-mod
-cd wolfbud-claude-mod
-claude plugin marketplace add "$(pwd)"               # needs an absolute path, "." fails
+claude plugin marketplace add leopiney/wolfbud-claude-mod
 claude plugin install wolfbud@elevenlabs-mods
-printf '{"api_key":"%s"}' "$ELEVENLABS_API_KEY" | claude plugin configure wolfbud@elevenlabs-mods --values-stdin   # kept in secure storage
+printf '{"api_key":"%s"}' "$ELEVENLABS_API_KEY" | claude plugin configure wolfbud@elevenlabs-mods --values-stdin   # kept in secure storage; or export ELEVENLABS_API_KEY
 ```
 
-Restart Claude Code. The install is a copy cached by version, so to ship a change:
+Restart Claude Code. On first use the bridge finds or creates the agent in the key's ElevenLabs account and syncs it to the definition (see [Changing the agent](#changing-the-agent)).
+
+To install a clone instead, run `ELEVENLABS_API_KEY=… pnpm run install-plugin` from its root (`--dry-run` lists the steps), or by hand: `pnpm install && pnpm window:build`, then the commands above with `claude plugin marketplace add "$(pwd)"` (an absolute path; "." fails). Both marketplaces are named `elevenlabs-mods`, and only one can be added at a time: `claude plugin marketplace remove elevenlabs-mods` (which uninstalls the mod) before you switch.
+
+The install is a copy cached by version, so to ship a change:
 
 1. Bump `version` in `.claude-plugin/plugin.json`.
-2. Rebuild the window if it changed: `pnpm window:build`.
-3. Run `claude plugin marketplace update elevenlabs-mods && claude plugin update wolfbud@elevenlabs-mods`.
-4. Restart.
+2. Commit. The pre-commit hook rebuilds the window when `window/`, the dependencies or the version changed, and checks the agent definition when it changed.
+3. Push. Installs pick it up with `claude plugin update wolfbud@elevenlabs-mods` (auto-update is off by default for this marketplace) and a restart. An install from a clone also needs `claude plugin marketplace update elevenlabs-mods` first.
 
 While developing, load the repo copy instead (it hot-reloads):
 
@@ -111,21 +99,24 @@ With [terminal-browser](https://github.com/zenbu-labs/terminal-browser) installe
 WOLFBUD_BROWSER=terminal-browser claude --plugin-dir ./mods/wolfbud   # or set the `browser` option
 ```
 
-Env overrides: `WOLFBUD_BROWSER` (`chrome-app`, `orca-browser`, `terminal-browser` or `default`, wins over the option), `WOLFBUD_AGENT_ID` (else `elevenlabs/agent-id.json`), `WOLFBUD_NODE` (else `node` on PATH).
+Env overrides: `WOLFBUD_BROWSER` (`chrome-app`, `orca-browser`, `terminal-browser` or `default`, wins over the option), `WOLFBUD_AGENT_ID` (an agent to use as it is, never synced; else the one the bridge set up), `WOLFBUD_NODE` (else `node` on PATH).
 
 ## Changing the agent
 
-`elevenlabs/agent.json` (settings, tools) and `elevenlabs/prompt.md` (system prompt) are the source of truth. Edit them and run `pnpm agent:sync`.
+`elevenlabs/agent.json` (settings, tools) and `elevenlabs/prompt.md` (system prompt) are the source of truth, and every install syncs its user's own agent to them. The mod keeps the agent's id in `$.store` with a hash of the definition. A bridge whose definition hashes differently (an edit, or a plugin update that changed it) syncs again before the first call. So does one whose saved agent is gone (deleted, or in another account than the key's).
 
+- `pnpm agent:sync` syncs by hand. `pnpm agent:sync --dry-run` checks the definition (no em dashes: the agent would copy them) and prints what a sync sends; the pre-commit hook runs it. `pnpm agent:simulate` runs a simulated call, no mic needed.
+- The sync is `bridge/agent.mjs`: plain REST calls, no SDK, so an install needs no packages. Client tools upsert by name, the agent is found or created by name, and an update sends only what the definition owns. The agent PATCH deep-merges, so a setting tried in the dashboard survives until it's codified here.
 - Tool names are the contract with `window/src/call.ts`: rename both or neither.
 - Renaming the agent creates a new one; delete the old one in the dashboard.
-- Models: `deepseek-v41-flash` (LLM) and `eleven_v4_turbo` (TTS). SDK 2.70.0's TTS enum predates v4, so the sync sets `tts.model_id` with a raw PATCH after the SDK update. English agents are refused the v2.5 TTS models (`eleven_flash_v2_5`, `eleven_turbo_v2_5`).
+- Models: `deepseek-v41-flash` (LLM) and `eleven_v4_turbo` (TTS). English agents are refused the v2.5 TTS models (`eleven_flash_v2_5`, `eleven_turbo_v2_5`).
+- The voice is from the Voice Library and allows free users. Agents use it by id, so no account has to add it first.
 - v4 can speak inline audio tags (`[laughing]`); the window strips them from captions and the pane.
 
 ## Security
 
 - The bridge listens on 127.0.0.1 only and checks a per-session key on every `/api` route. It also rejects other `Host` and `Origin` values, so a web page can't post prompts into Claude's chat.
-- The agent requires signed tokens, so the committed agent id alone can't start a call.
+- The agent requires signed tokens, so its id alone can't start a call.
 - The ElevenLabs key goes to the bridge process through the environment and never reaches the browser.
 - Prompts reach Claude framed as coming from the wolfbud plugin ("The user asked WolfBud … to pass this on"), and the pane lists each one.
 

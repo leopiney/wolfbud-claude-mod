@@ -1,5 +1,5 @@
 {
-  "$comment": "The WolfBud voice agent, owned in code. `pnpm agent:sync` pushes this file (and promptFile) to ElevenLabs and writes the agent id to agent-id.json. Tool names are the contract with the window's clientTools (window/src/tools.ts): rename both or neither. Renaming the agent creates a new one on the next sync.",
+  "$comment": "The WolfBud voice agent, owned in code. Each user's bridge pushes this file (and promptFile) to their own ElevenLabs account when it changes (bridge/agent.mjs); `pnpm agent:sync` does it by hand. Tool names are the contract with the window's clientTools (window/src/tools.ts): rename both or neither. Renaming the agent creates a new one on the next sync.",
   "name": "WolfBud Cowork",
   "promptFile": "prompt.md",
   "firstMessage": "Hey, it's WolfBud. I've got eyes on Claude's session. What's on your mind?",

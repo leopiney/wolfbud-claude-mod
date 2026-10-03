@@ -7,7 +7,6 @@ export type WolfbudBridge = {
   key: string
   error: string | null
   hasApiKey: boolean
-  hasAgent: boolean
   isWindowBuilt: boolean
   isWindowOpen: boolean
   /** The person started it and hasn't stopped it: a reload brings it back. */

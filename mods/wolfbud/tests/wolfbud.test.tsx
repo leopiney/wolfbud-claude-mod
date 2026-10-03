@@ -14,9 +14,11 @@ type Post = { path: string; body: Record<string, unknown> }
 /**
  * Stands in for bridge/server.mjs beneath the plugin: `say` writes a
  * `WOLFBUD` line on its stdout, and every POST, spawn and `open` is recorded.
+ * `store` is the plugin's `$.store`, starting from `stored`.
  * Promises from `until` settle as soon as what they wait for has happened.
  */
-function fakeBridge(on: On, { failing = [] }: { failing?: string[] } = {}) {
+function fakeBridge(on: On, { failing = [], stored = {} }: { failing?: string[]; stored?: Record<string, unknown> } = {}) {
+  const store = new Map<string, unknown>(Object.entries(stored))
   const spawned: Array<{ argv: readonly string[]; env: Record<string, string> }> = []
   const posts: Post[] = []
   const runs: string[][] = []
@@ -63,6 +65,12 @@ function fakeBridge(on: On, { failing = [] }: { failing?: string[] } = {}) {
     const exitCode = failing.includes(e.argv[0] ?? '') ? 1 : 0
     return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
+  on('store.get', (_$, e) => ({ value: store.get(e.key) }))
+  on('store.set', (_$, e) => {
+    store.set(e.key, e.value)
+    notify()
+    return { value: undefined }
+  })
   mock.clock(on, { now: 1_700_000_000_000 })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
@@ -88,6 +96,7 @@ function fakeBridge(on: On, { failing = [] }: { failing?: string[] } = {}) {
   const postsTo = (path: string) => posts.filter(post => post.path === path)
 
   return {
+    store,
     spawned,
     posts,
     runs,
@@ -113,7 +122,7 @@ function fakeBridge(on: On, { failing = [] }: { failing?: string[] } = {}) {
 async function startWolfbud($: Engine, bridge: ReturnType<typeof fakeBridge>) {
   const answer = await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
   await bridge.until(() => bridge.spawned.length === 1)
-  bridge.say({ t: 'ready', port: 4747, hasApiKey: true, hasAgent: true, isWindowBuilt: true })
+  bridge.say({ t: 'ready', port: 4747, hasApiKey: true, isWindowBuilt: true })
   await bridge.until(() => bridge.runs.length === 1)
   return answer
 }
@@ -281,6 +290,30 @@ describe('the bridge', () => {
     await startWolfbud($, bridge)
 
     expect(bridge.spawned[0]?.env.ELEVENLABS_API_KEY).toBe('from-option')
+    bridge.close()
+  })
+
+  test('the agent a bridge set up is saved for the next one', async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+    const bridge = fakeBridge(on)
+    await startWolfbud($, bridge)
+    expect(bridge.spawned[0]?.env.WOLFBUD_SAVED_AGENT).toBeUndefined()
+
+    bridge.say({ t: 'agent', id: 'agent_new', def: 'def-2' })
+    await bridge.until(() => bridge.store.has('agent'))
+
+    expect(bridge.store.get('agent')).toEqual({ id: 'agent_new', def: 'def-2' })
+    bridge.close()
+  })
+
+  test('the saved agent is handed to the bridge', async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
+    const bridge = fakeBridge(on, { stored: { agent: { id: 'agent_saved', def: 'def-1' } } })
+
+    await startWolfbud($, bridge)
+
+    expect(bridge.spawned[0]?.env.WOLFBUD_SAVED_AGENT).toBe(JSON.stringify({ id: 'agent_saved', def: 'def-1' }))
+    expect(bridge.spawned[0]?.env.WOLFBUD_AGENT_ID).toBeUndefined()
     bridge.close()
   })
 })

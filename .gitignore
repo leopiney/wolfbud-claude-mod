@@ -2,5 +2,3 @@
 mods/*/.claude-plugin/types/
 .DS_Store
 node_modules/
-# Built by `pnpm window:build`; the bridge serves it
-mods/wolfbud/bridge/window/

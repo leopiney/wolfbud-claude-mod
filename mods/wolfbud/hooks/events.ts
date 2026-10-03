@@ -33,8 +33,10 @@ export type SessionInfo = { project: string; cwd: string }
 
 /** One line the bridge writes on stdout for the mod: `WOLFBUD <json>`. */
 export type BridgeMessage =
-  | { t: 'ready'; port: number; hasApiKey: boolean; hasAgent: boolean; isWindowBuilt: boolean }
+  | { t: 'ready'; port: number; hasApiKey: boolean; isWindowBuilt: boolean }
   | { t: 'fatal'; error: string }
+  /** The agent it set up in the user's account, and the hash of the definition it synced. */
+  | { t: 'agent'; id: string; def: string }
   | { t: 'window'; open: boolean; count: number }
   | { t: 'status'; call: CallStatus; mode: VoiceMode | null; error?: string }
   | { t: 'line'; role: 'user' | 'agent'; text: string }

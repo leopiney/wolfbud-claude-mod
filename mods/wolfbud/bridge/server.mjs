@@ -9,14 +9,17 @@
 //     /api/command.
 // The window gets the activity over SSE (/api/stream), posts to /api/page,
 // and asks /api/token for an ElevenLabs conversation token, so the API key
-// never reaches the browser.
+// never reaches the browser. The agent lives in the user's own account: this
+// bridge sets it up from the definition (agent.mjs) when the mod has none
+// saved, or saved one from another definition, and says so for the mod to save.
 //
 // Every /api route needs the session key (x-wolfbud-key header or ?k=), and
 // only answers to Host/Origin 127.0.0.1 or localhost on its own port: a web
 // page elsewhere can't post prompts into Claude's chat.
 //
 // Env: WOLFBUD_KEY (required), WOLFBUD_PORT (preferred, default 4747),
-// ELEVENLABS_API_KEY, WOLFBUD_AGENT_ID (else ../elevenlabs/agent-id.json).
+// ELEVENLABS_API_KEY, WOLFBUD_SAVED_AGENT (the agent a bridge set up before,
+// as the mod saved it), WOLFBUD_AGENT_ID (an agent to use as it is, never synced).
 
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
@@ -25,14 +28,17 @@ import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 
+import { loadDefinition, syncAgent } from './agent.mjs'
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 const WINDOW_DIR = resolve(HERE, 'window')
-const AGENT_ID_FILE = resolve(HERE, '../elevenlabs/agent-id.json')
 const ELEVENLABS = 'https://api.elevenlabs.io/v1'
 
 const KEY = process.env.WOLFBUD_KEY || randomUUID()
 const PREFERRED_PORT = Number(process.env.WOLFBUD_PORT) || 4747
 const API_KEY = process.env.ELEVENLABS_API_KEY || ''
+const AGENT_OVERRIDE = process.env.WOLFBUD_AGENT_ID || ''
+const DEFINITION = loadDefinition()
 const MAX_BODY = 256 * 1024
 const ACK_TIMEOUT_MS = 15_000
 const RECENT_LIMIT = 150
@@ -59,6 +65,10 @@ let isClaudeBusy = false
 /** What the mod says about the session: { project, cwd }. */
 let session = {}
 let port = 0
+/** The agent calls go to: the override, or the saved one while it matches the definition; '' until set up. */
+let agentId = AGENT_OVERRIDE || savedAgentId()
+/** The agent setup in flight, which every call that needs it waits on. */
+let settingUp = null
 
 function emit(message) {
   process.stdout.write(`WOLFBUD ${JSON.stringify(message)}\n`)
@@ -68,13 +78,29 @@ function log(...parts) {
   process.stderr.write(`[wolfbud-bridge] ${parts.join(' ')}\n`)
 }
 
-function agentId() {
-  if (process.env.WOLFBUD_AGENT_ID) return process.env.WOLFBUD_AGENT_ID
+/** The agent the mod saved, if it was set up from this definition. */
+function savedAgentId() {
   try {
-    return JSON.parse(readFileSync(AGENT_ID_FILE, 'utf8')).agentId ?? ''
+    const saved = JSON.parse(process.env.WOLFBUD_SAVED_AGENT ?? '')
+    return saved?.def === DEFINITION.hash && typeof saved.id === 'string' ? saved.id : ''
   } catch {
     return ''
   }
+}
+
+/** The agent's id, after finding or creating it in the key's account and syncing it to the definition if needed. */
+function readyAgent() {
+  if (agentId) return Promise.resolve(agentId)
+  settingUp ??= syncAgent(API_KEY, DEFINITION, { log: line => log('agent:', line) })
+    .then(id => {
+      agentId = id
+      emit({ t: 'agent', id, def: DEFINITION.hash })
+      return id
+    })
+    .finally(() => {
+      settingUp = null
+    })
+  return settingUp
 }
 
 function isWindowBuilt() {
@@ -134,34 +160,46 @@ function awaitAck(res, message) {
   emit({ ...message, id })
 }
 
+async function requestToken(id) {
+  const res = await fetch(`${ELEVENLABS}/convai/conversation/token?agent_id=${encodeURIComponent(id)}`, {
+    headers: { 'xi-api-key': API_KEY },
+  })
+  return { status: res.status, ok: res.ok, text: await res.text() }
+}
+
 async function mintToken() {
   if (!API_KEY) {
     return [503, { error: 'no_api_key', message: 'Set ELEVENLABS_API_KEY (or the api_key option) and restart Claude Code.' }]
   }
-  const id = agentId()
-  if (!id) {
-    return [503, { error: 'no_agent', message: 'No agent yet: run `pnpm agent:sync` in the wolfbud-claude-mod repo.' }]
+  let res
+  try {
+    res = await requestToken(await readyAgent())
+    // The saved agent is gone (deleted, or in another account than this key's): set it up again, once.
+    if (res.status === 404 && !AGENT_OVERRIDE) {
+      agentId = ''
+      res = await requestToken(await readyAgent())
+    }
+  } catch (error) {
+    return [502, { error: 'agent', message: `Couldn't get the WolfBud agent ready: ${error?.message ?? error}` }]
   }
-  const res = await fetch(`${ELEVENLABS}/convai/conversation/token?agent_id=${encodeURIComponent(id)}`, {
-    headers: { 'xi-api-key': API_KEY },
-  })
-  const text = await res.text()
   if (!res.ok) {
-    let detail = text.slice(0, 200)
+    let detail = res.text.slice(0, 200)
     try {
-      const parsed = JSON.parse(text).detail
-      detail = typeof parsed === 'string' ? parsed : parsed?.message ?? detail
+      const parsed = JSON.parse(res.text).detail
+      detail = typeof parsed === 'string' ? parsed : (parsed?.message ?? detail)
     } catch {}
     return [502, { error: 'elevenlabs', message: `ElevenLabs refused the token (${res.status}): ${detail}` }]
   }
-  return [200, { token: JSON.parse(text).token }]
+  return [200, { token: JSON.parse(res.text).token }]
 }
 
 async function serveStatic(res, pathname) {
   if (!isWindowBuilt()) {
     res.writeHead(503, { 'content-type': 'text/html; charset=utf-8' })
-    res.end('<!doctype html><title>WolfBud</title><body style="font:15px system-ui;padding:24px;background:#141428;color:#e8e8ff">'
-      + '<h2>The WolfBud window isn’t built yet</h2><p>In the wolfbud-claude-mod repo run <code>pnpm install &amp;&amp; pnpm window:build</code>, then reload.</p>')
+    res.end(
+      '<!doctype html><title>WolfBud</title><body style="font:15px system-ui;padding:24px;background:#141428;color:#e8e8ff">' +
+        '<h2>The WolfBud window isn’t built yet</h2><p>In the wolfbud-claude-mod repo run <code>pnpm install &amp;&amp; pnpm window:build</code>, then reload.</p>',
+    )
     return
   }
   const file = resolve(WINDOW_DIR, `.${pathname === '/' ? '/index.html' : decodeURIComponent(pathname)}`)
@@ -283,7 +321,7 @@ const server = createServer(async (req, res) => {
           ok: true,
           port,
           hasApiKey: Boolean(API_KEY),
-          hasAgent: Boolean(agentId()),
+          hasAgent: Boolean(agentId),
           isWindowBuilt: isWindowBuilt(),
           windows: windows.length,
         })
@@ -351,8 +389,10 @@ for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
 listen()
   .then(bound => {
     port = bound
-    emit({ t: 'ready', port, hasApiKey: Boolean(API_KEY), hasAgent: Boolean(agentId()), isWindowBuilt: isWindowBuilt() })
+    emit({ t: 'ready', port, hasApiKey: Boolean(API_KEY), isWindowBuilt: isWindowBuilt() })
     log(`listening on http://127.0.0.1:${port}`)
+    // Get the agent ready before the first call asks for it.
+    if (API_KEY) readyAgent().catch(error => log('agent setup failed:', error?.message ?? error))
   })
   .catch(error => {
     emit({ t: 'fatal', error: String(error?.message ?? error) })

@@ -42,7 +42,6 @@ const bridge = atom({ plugin: 'wolfbud', key: 'bridge' } as const, {
   key: '',
   error: null,
   hasApiKey: false,
-  hasAgent: false,
   isWindowBuilt: false,
   isWindowOpen: false,
   isWanted: false,
@@ -64,6 +63,13 @@ function readBrowser(value: unknown): Browser | null {
   return value === 'auto' || value === 'default' || value === 'terminal-browser' || value === 'orca-browser' || value === 'chrome-app'
     ? value
     : null
+}
+
+/** The agent a bridge set up, as `$.store` keeps it across sessions: its id, and the hash of the definition it synced. */
+function readSavedAgent(value: unknown): { id: string; def: string } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { id, def } = value as Record<string, unknown>
+  return typeof id === 'string' && typeof def === 'string' ? { id, def } : null
 }
 
 function readSettings(options: PluginOptions): Settings {
@@ -115,10 +121,13 @@ async function startBridge($: EngineInterface): Promise<void> {
   const apiKey = settings.apiKey || (await $.env.get('ELEVENLABS_API_KEY')) || ''
   const agentId = (await $.env.get('WOLFBUD_AGENT_ID')) || ''
   const node = (await $.env.get('WOLFBUD_NODE')) || 'node'
+  // The bridge sets the agent up again only when this is missing or stale.
+  const saved = readSavedAgent(await $.store.get('agent'))
 
   const env: Record<string, string> = { WOLFBUD_KEY: key, WOLFBUD_PORT: String(current.port || settings.port) }
   if (apiKey) env.ELEVENLABS_API_KEY = apiKey
   if (agentId) env.WOLFBUD_AGENT_ID = agentId
+  if (saved !== null) env.WOLFBUD_SAVED_AGENT = JSON.stringify(saved)
 
   await patchBridge($, { status: 'starting', key, run, error: null, isWanted: true })
   const stream = $.process.spawn({ argv: [node, `${$.plugin.root}/bridge/server.mjs`], env })
@@ -178,7 +187,6 @@ async function onBridgeMessage($: EngineInterface, message: BridgeMessage): Prom
         port: message.port,
         error: null,
         hasApiKey: message.hasApiKey,
-        hasAgent: message.hasAgent,
         isWindowBuilt: message.isWindowBuilt,
       })
       const cwd = await $.session.cwd()
@@ -191,6 +199,10 @@ async function onBridgeMessage($: EngineInterface, message: BridgeMessage): Prom
     }
     case 'fatal':
       await patchBridge($, { status: 'error', error: message.error })
+      return
+    case 'agent':
+      // Kept across sessions (and plugin updates), so the next bridge skips the setup.
+      await $.store.set('agent', { id: message.id, def: message.def })
       return
     case 'window':
       await patchBridge($, { isWindowOpen: message.open })
@@ -392,7 +404,6 @@ function problems(b: WolfbudBridge): string[] {
   if (b.status !== 'ready') return []
   const found: string[] = []
   if (!b.hasApiKey) found.push('No ElevenLabs API key: set ELEVENLABS_API_KEY (or the api_key option) and restart Claude Code.')
-  if (!b.hasAgent) found.push('No agent yet: run `pnpm agent:sync` in the wolfbud-claude-mod repo.')
   if (!b.isWindowBuilt) found.push('The window is not built: run `pnpm window:build` in the wolfbud-claude-mod repo.')
   return found
 }

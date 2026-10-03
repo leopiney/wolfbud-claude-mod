@@ -5,24 +5,21 @@
 //   ELEVENLABS_API_KEY=… pnpm agent:simulate
 //
 // Run it after `pnpm agent:sync` when the prompt or the tools change. The
-// client tools are mocked here (they only exist in the window).
+// client tools are mocked here (they only exist in the window). It calls the
+// agent the key's account has under the definition's name, or WOLFBUD_AGENT_ID.
 
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
 
-const AGENT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../mods/wolfbud/elevenlabs')
+import { findAgentId, loadDefinition } from '../mods/wolfbud/bridge/agent.mjs'
+
 const apiKey = process.env.ELEVENLABS_API_KEY
 if (!apiKey) {
   console.error('ELEVENLABS_API_KEY is not set.')
   process.exit(1)
 }
-let agentId
-try {
-  agentId = JSON.parse(readFileSync(resolve(AGENT_DIR, 'agent-id.json'), 'utf8')).agentId
-} catch {
-  console.error('No agent-id.json yet: run `pnpm agent:sync` first.')
+const agentId = process.env.WOLFBUD_AGENT_ID || (await findAgentId(apiKey, loadDefinition().def.name))
+if (!agentId) {
+  console.error('No WolfBud agent in this account yet: run `pnpm agent:sync` first.')
   process.exit(1)
 }
 
@@ -33,7 +30,8 @@ On this voice call with WolfBud, your coworker:
 3. When WolfBud confirms it was sent, say thanks and goodbye.
 Talk like a real person on a call: short, casual, one thing at a time. Never break character.`
 
-const ACTIVITY = 'Claude is working (6 steps into the current task). Latest prompt (typed by the user): "Add a dark mode toggle to the settings page". Latest steps, oldest first: Read (settings/Page.tsx); Edit (settings/Page.tsx); Bash (Run the tests): failed, 3 failed, 12 passed.'
+const ACTIVITY =
+  'Claude is working (6 steps into the current task). Latest prompt (typed by the user): "Add a dark mode toggle to the settings page". Latest steps, oldest first: Read (settings/Page.tsx); Edit (settings/Page.tsx); Bash (Run the tests): failed, 3 failed, 12 passed.'
 
 const client = new ElevenLabsClient({ apiKey })
 console.log(`Simulating a call with ${agentId}…\n`)

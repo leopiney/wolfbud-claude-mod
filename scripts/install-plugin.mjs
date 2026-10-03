@@ -1,15 +1,16 @@
-// One-command install of the WolfBud mod, the same steps as the README:
+// Installs the WolfBud mod from this clone, the same steps as the mod's README
+// (an install from GitHub needs none of this: see the root README):
 //
 //   ELEVENLABS_API_KEY=… pnpm run install-plugin
-//   ELEVENLABS_API_KEY=… pnpm run install-plugin --skip-agent   # keep the ElevenLabs agent as it is
-//   pnpm run install-plugin --dry-run                           # print the steps, change nothing
+//   pnpm run install-plugin --dry-run            # print the steps, change nothing
 //
 // 1. pnpm install            2. pnpm window:build (into mods/wolfbud/bridge/window)
-// 3. pnpm agent:sync         4. claude plugin marketplace add <this repo>
-// 5. claude plugin install   6. claude plugin configure (the API key, on stdin)
+// 3. claude plugin marketplace add <this clone>
+// 4. claude plugin install   5. claude plugin configure (the API key, on stdin)
 //
 // Safe to run again: every step is idempotent, so a re-run also picks up a rebuilt
-// window and an edited agent. The key is never printed or put on a command line.
+// window. The voice agent is set up by the bridge on the first call. The key is
+// never printed or put on a command line.
 
 import { spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
@@ -22,10 +23,9 @@ const MIN_NODE = 20
 
 const flags = new Set(process.argv.slice(2))
 const isDryRun = flags.has('--dry-run')
-const skipAgent = flags.has('--skip-agent')
 const apiKey = process.env.ELEVENLABS_API_KEY?.trim() ?? ''
 
-const TOTAL = skipAgent ? 5 : 6
+const TOTAL = 5
 let stepNumber = 0
 
 function step(title) {
@@ -67,11 +67,6 @@ run('pnpm', ['install'])
 step('Building the call window')
 run('pnpm', ['window:build'])
 
-if (!skipAgent) {
-  step('Syncing the ElevenLabs voice agent')
-  run('pnpm', ['agent:sync'])
-}
-
 step('Registering this repo as the Claude Code marketplace')
 run('claude', ['plugin', 'marketplace', 'add', ROOT]) // needs an absolute path
 
@@ -91,7 +86,7 @@ if (!isDryRun) {
 }
 
 console.log(`\n✔ ${isDryRun ? 'Dry run finished.' : 'WolfBud is installed.'}`)
-console.log('  Restart Claude Code, then type /wolfbud call')
+console.log('  Restart Claude Code, then type /wolfbud call (the first call sets up the voice agent in your ElevenLabs account)')
 console.log(
   '  In Orca it opens the Orca browser, elsewhere a Chrome app window; set the `browser` option to change that (see mods/wolfbud/README.md).',
 )

@@ -1,1 +1,9 @@
+# The window ships built inside the mod, since an install from GitHub runs no
+# build: rebuild it (from the working tree) whenever a commit changes its inputs.
+# The plugin version is one of them; the window shows it.
+if git diff --cached --name-only | grep -qE '^(window/|package\.json$|pnpm-lock\.yaml$|mods/wolfbud/\.claude-plugin/plugin\.json$)'; then
+  pnpm window:build
+  git add -A mods/wolfbud/bridge/window
+fi
+
 pnpm exec lint-staged --concurrent false

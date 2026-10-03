@@ -61,29 +61,22 @@ The mod itself is in [`mods/wolfbud`](mods/wolfbud); its [README](mods/wolfbud/R
 
 ## 🚀 Quick start
 
-You need Claude Code ≥ 2.1.287, Node, [pnpm](https://pnpm.io), Google Chrome (macOS tested) and an [ElevenLabs API key](https://elevenlabs.io/app/settings/api-keys) exported as `ELEVENLABS_API_KEY`.
-
-One command, after cloning (it runs every step below and prints what it does; safe to run again):
+You need Claude Code ≥ 2.1.287, Node 20+, Google Chrome (macOS tested) and an [ElevenLabs API key](https://elevenlabs.io/app/settings/api-keys). It installs straight from GitHub, with no clone and no build:
 
 ```bash
-git clone https://github.com/leopiney/wolfbud-claude-mod
-cd wolfbud-claude-mod
-pnpm run install-plugin       # add --skip-agent to leave your ElevenLabs agent alone, --dry-run to just list the steps
+claude plugin marketplace add leopiney/wolfbud-claude-mod
+claude plugin install wolfbud@elevenlabs-mods
 ```
 
-Or step by step:
+Inside Claude Code, `/plugin install wolfbud --marketplace leopiney/wolfbud-claude-mod` does both in one step.
+
+Then give it your API key: export `ELEVENLABS_API_KEY` before you start Claude Code, or save the key in Claude Code's secure storage with `/plugin configure wolfbud@elevenlabs-mods`, or from your shell:
 
 ```bash
-pnpm install
-pnpm window:build                          # the call window, served by the mod's local bridge
-pnpm agent:sync                            # creates the voice agent in your ElevenLabs account
-
-claude plugin marketplace add "$(pwd)"     # needs an absolute path, "." fails
-claude plugin install wolfbud@elevenlabs-mods
 printf '{"api_key":"%s"}' "$ELEVENLABS_API_KEY" | claude plugin configure wolfbud@elevenlabs-mods --values-stdin
 ```
 
-Restart Claude Code, then:
+Restart Claude Code (or run `/reload-plugins`), then:
 
 | | |
 | --- | --- |
@@ -91,11 +84,13 @@ Restart Claude Code, then:
 | `/wolfbud call` | open them and start the call |
 | `/wolfbud end` | hang up |
 
-Try it from the repo without installing: `claude --plugin-dir ./mods/wolfbud`.
+The first time, WolfBud takes a few seconds to set up its voice agent in your ElevenLabs account. New versions come with `claude plugin update wolfbud@elevenlabs-mods`, and they update your agent the same way.
+
+Working on WolfBud itself? Clone the repo and run `claude --plugin-dir ./mods/wolfbud` (it hot-reloads), or install your clone with `pnpm run install-plugin`. The [mod's README](mods/wolfbud/README.md#install) has the details.
 
 ## 🔐 Your key, your agent
 
-- The agent is created in **your** ElevenLabs account and the calls are billed to it.
+- The agent is created in **your** ElevenLabs account the first time you use WolfBud, and the calls are billed to it.
 - The API key stays in the local bridge (127.0.0.1 only); it never reaches the browser window.
 - The bridge checks a per-session key and rejects foreign `Host` and `Origin` headers, so a web page can't push prompts into Claude's chat.
 
@@ -103,9 +98,9 @@ Try it from the repo without installing: `claude --plugin-dir ./mods/wolfbud`.
 
 | Path | |
 | --- | --- |
-| [`mods/wolfbud`](mods/wolfbud) | the Claude Code mod: hooks, pane, local bridge, agent definition |
-| [`window/`](window) | the call window: Vite + three.js wolf + `@elevenlabs/client` (WebRTC) |
-| [`scripts/`](scripts) | `agent:sync` (create or update the agent from code) and `agent:simulate` (a call without a mic) |
+| [`mods/wolfbud`](mods/wolfbud) | the Claude Code mod: hooks, pane, local bridge (which also sets up the agent), agent definition, built window |
+| [`window/`](window) | the call window: Vite + three.js wolf + `@elevenlabs/client` (WebRTC), built into the mod and committed |
+| [`scripts/`](scripts) | `agent:sync` (push the agent definition by hand), `agent:simulate` (a call without a mic) and `install-plugin` (install from a clone) |
 | [`video/`](video) | the demo videos: a Remotion project that cuts them from a session recording, with ElevenLabs music, effects and narration |
 | [`assets/`](assets) | the banner, icon and screenshots above |
 

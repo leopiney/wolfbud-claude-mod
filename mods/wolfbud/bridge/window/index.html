@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>WolfBud</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐺</text></svg>" />
+    <script type="module" crossorigin src="./assets/index-vAxWa-G6.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Dl8SoQ1Y.css">
+  </head>
+  <body>
+    <main id="app" class="app" data-call="idle" data-mode="listening" data-claude="idle" data-hearing="no" data-wolf="shown">
+      <header class="top">
+        <span class="claude-chip"><span class="claude-dot"></span><span id="claude-status">Claude is idle</span></span>
+      </header>
+
+      <section id="stage" class="stage">
+        <button id="badge" class="badge" type="button" aria-label="Pet WolfBud">
+          <span class="ring"></span>
+          <span id="wolf" class="wolf"></span>
+        </button>
+        <p id="status" class="status" aria-live="polite">Not on a call</p>
+      </section>
+
+      <section class="captions" aria-live="polite">
+        <p id="caption-agent" class="caption caption-agent"></p>
+        <p id="caption-user" class="caption caption-user"></p>
+      </section>
+
+      <section class="activity">
+        <h2>Claude</h2>
+        <ul id="feed" class="feed"></ul>
+      </section>
+
+      <footer class="controls">
+        <button id="call" class="call primary" type="button">Call WolfBud</button>
+        <button id="mute" class="mute" type="button" title="Mute" disabled aria-label="Mute microphone">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+        </button>
+        <label class="announce"><input id="announce" type="checkbox" checked /> Speak up when Claude finishes</label>
+      </footer>
+
+      <span id="version" class="version"></span>
+
+      <div id="overlay" class="overlay" hidden><p id="overlay-text"></p></div>
+    </main>
+  </body>
+</html>

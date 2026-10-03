@@ -6,7 +6,7 @@ export default tseslint.config(
   {
     ignores: [
       'node_modules/',
-      // Built by `pnpm window:build`; the bridge serves it
+      // Built by `pnpm window:build` and committed; the bridge serves it
       'mods/wolfbud/bridge/window/',
       // Written by Claude Code on every mod load
       'mods/*/.claude-plugin/types/',

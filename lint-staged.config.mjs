@@ -13,4 +13,6 @@ export default {
   '*.json': 'prettier --write',
   '{window/**/*.ts,mods/wolfbud/hooks/events.ts}': () => 'tsc -p window',
   'mods/wolfbud/{hooks,tests,types}/**/*.{ts,tsx}': () => (hasModTypes ? 'tsc -p mods/wolfbud' : []),
+  // Every user's bridge pushes the agent definition to their account: check it before it ships.
+  'mods/wolfbud/elevenlabs/*': () => 'node scripts/sync-agent.mjs --dry-run',
 }

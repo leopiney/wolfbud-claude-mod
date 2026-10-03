@@ -1,6 +1,6 @@
 node_modules/
 pnpm-lock.yaml
-# Built by `pnpm window:build`
+# Built by `pnpm window:build` (committed: the pre-commit hook rebuilds it)
 mods/wolfbud/bridge/window/
 # Written by Claude Code on every mod load
 mods/*/.claude-plugin/types/
