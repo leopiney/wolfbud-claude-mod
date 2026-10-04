@@ -12,6 +12,8 @@ export default tseslint.config(
       'mods/*/.claude-plugin/types/',
       // The demo video project: local only (gitignored)
       'video/',
+      // Agent skills installed by the skills CLI (skills-lock.json): kept as published
+      '.agents/',
     ],
   },
   js.configs.recommended,
