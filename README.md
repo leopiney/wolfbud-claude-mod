@@ -22,11 +22,7 @@
 
 One real 20-minute session, in which WolfBud was used to build WolfBud's own Orca support. Every change was asked for out loud, and the session pushed three commits.
 
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/386d7a70-b663-4d36-9273-b09d493b9531">
-    <img src="assets/videos/wolfbud-built-by-voice.jpg" alt="Watch the demo (1:37): I used WolfBud to build WolfBud. A real 20-minute session, by voice." width="100%">
-  </a>
-</p>
+https://github.com/user-attachments/assets/6aff10b8-b493-4e9a-a19d-4d3a5bb5b8f2
 
 <table>
   <tr>
