@@ -44,9 +44,8 @@ To install a clone instead, run `ELEVENLABS_API_KEY=… pnpm run install-plugin`
 
 The install is a copy cached by version, so to ship a change:
 
-1. Bump `version` in `.claude-plugin/plugin.json`.
-2. Commit. The pre-commit hook rebuilds the window when `window/`, the dependencies or the version changed, and checks the agent definition when it changed.
-3. Push. Installs pick it up with `claude plugin update wolfbud@elevenlabs-mods` (auto-update is off by default for this marketplace) and a restart. An install from a clone also needs `claude plugin marketplace update elevenlabs-mods` first.
+1. Commit. The pre-commit hook bumps `version` in `.claude-plugin/plugin.json` when the commit changes what ships (`window/` or the mod, minus its tests and docs). It bumps the patch once per branch, counted from `origin/main`, so a branch's commits ship as one release. `VERSION_BUMP=minor git commit …` (or `major`) picks the level, and `VERSION_BUMP=none` skips it. It then rebuilds the window when `window/`, the dependencies or the version changed, and checks the agent definition when it changed.
+2. Push. Installs pick it up with `claude plugin update wolfbud@elevenlabs-mods` (auto-update is off by default for this marketplace) and a restart. An install from a clone also needs `claude plugin marketplace update elevenlabs-mods` first.
 
 While developing, load the repo copy instead (it hot-reloads):
 

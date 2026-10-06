@@ -34,7 +34,7 @@ mods/<mod-name>/
 - The session we're in now loaded no `--plugin-dir`, so a new mod under `mods/` won't run here. Validate and test it from the shell, and tell the user the exact restart command.
 - Desktop/SDK hosts: `CLAUDE_CODE_PLUGIN_DIRS` (absolute paths) in the `env` of `~/.claude/settings.json`, never the project's settings.
 - Confirm it loaded: `/plugin`. The dim line reads `N mods active · <name>`. Failures show as one dim transcript line `<plugin>: <event> ... <reason>`; the full detail is in `claude --debug`.
-- An installed copy is cached by version, so keep developing against `--plugin-dir`.
+- An installed copy is cached by version, so keep developing against `--plugin-dir`. The pre-commit hook (`scripts/bump-version.mjs`) bumps the patch once per branch when a commit changes what a mod ships; for a feature or breaking change, commit with `VERSION_BUMP=minor` or `major`. Don't bump by hand.
 
 ## The loop (run all three before calling a change done)
 
