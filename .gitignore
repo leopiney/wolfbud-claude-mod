@@ -4,3 +4,16 @@ mods/*/.claude-plugin/types/
 node_modules/
 # The demo video project (Remotion): local only. Its cuts are in assets/videos (Git LFS)
 /video/
+# Husky writes these on install; not source
+.husky/_
+# This repo uses pnpm (pnpm-lock.yaml). An npm install leaves this behind.
+package-lock.json
+# Skills CLI payloads. The pin is skills-lock.json; restore with
+# `npx skills experimental_install`. Repo-authored skills stay tracked.
+.agents/
+.pi/skills/
+.claude/skills/*
+!.claude/skills/elevenlabs-mod/
+!.claude/skills/elevenlabs-mod/**
+!.claude/skills/mod-dev/
+!.claude/skills/mod-dev/**

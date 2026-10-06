@@ -88,7 +88,7 @@ Restart Claude Code (or run `/reload-plugins`), then:
 
 The first time, WolfBud takes a few seconds to set up its voice agent in your ElevenLabs account. New versions come with `claude plugin update wolfbud@elevenlabs-mods`, and they update your agent the same way.
 
-Working on WolfBud itself? Clone the repo and run `claude --plugin-dir ./mods/wolfbud` (it hot-reloads), or install your clone with `pnpm run install-plugin`. The [mod's README](mods/wolfbud/README.md#install) has the details.
+Working on WolfBud itself? Clone the repo and run `claude --plugin-dir ./mods/wolfbud` (it hot-reloads), or install your clone with `pnpm run install-plugin`. The [mod's README](mods/wolfbud/README.md#install) has the details. Agent skills are pinned in `skills-lock.json` and not committed; restore them with `npx skills experimental_install`.
 
 ## Your key, your agent
 
