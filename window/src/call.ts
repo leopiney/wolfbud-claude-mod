@@ -26,7 +26,7 @@ export type CallDeps = {
   bridge: Bridge
   view: CallView
   dynamicVariables(): Record<string, string>
-  activity(focus: ActivityFocus): string
+  activity(focus: ActivityFocus, session: string | null): string
   /** The call is up: time to hand the agent its context. */
   connected(): void
 }
@@ -275,23 +275,31 @@ export class WolfCall {
         touch()
         const prompt = String(parameters.prompt ?? '').trim()
         if (prompt === '') return 'No prompt given: say what Claude should do in `prompt`.'
+        const session = String(parameters.session ?? '').trim()
         return this.deps.bridge.ask({
           type: 'send',
           prompt,
           when: parameters.when === 'now' ? 'now' : 'after_current',
           summary: String(parameters.summary ?? ''),
+          ...(session !== '' ? { session } : {}),
         })
       },
       wolfbud_stop_claude: async parameters => {
         touch()
-        return this.deps.bridge.ask({ type: 'stop', reason: String(parameters.reason ?? '') })
+        const session = String(parameters.session ?? '').trim()
+        return this.deps.bridge.ask({
+          type: 'stop',
+          reason: String(parameters.reason ?? ''),
+          ...(session !== '' ? { session } : {}),
+        })
       },
       wolfbud_claude_activity: parameters => {
         touch()
         const focus = ['last_answer', 'recent_steps', 'errors', 'overview'].includes(String(parameters.focus))
           ? (String(parameters.focus) as ActivityFocus)
           : 'overview'
-        return this.deps.activity(focus)
+        const session = String(parameters.session ?? '').trim()
+        return this.deps.activity(focus, session === '' ? null : session)
       },
     }
   }

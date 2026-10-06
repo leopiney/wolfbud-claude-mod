@@ -1,6 +1,6 @@
 {
   "name": "wolfbud",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "WolfBud: a voice coworker (ElevenLabs agent + 3D wolf) that watches the session and can send prompts to Claude",
   "author": { "name": "Leonardo Piñeyro" },
   "types": "./types/index.d.ts",
@@ -8,21 +8,8 @@
     "api_key": {
       "type": "string",
       "title": "ElevenLabs API key",
-      "description": "The local bridge mints call tokens with it. Falls back to the ELEVENLABS_API_KEY environment variable.",
+      "description": "The hub mints call tokens with it. Falls back to the ELEVENLABS_API_KEY environment variable. Each /wolfbud hands it to the hub, which keeps the first non-empty one.",
       "sensitive": true
-    },
-    "port": {
-      "type": "number",
-      "title": "Bridge port",
-      "description": "Preferred local port for the WolfBud window; the next nine are tried when it's taken.",
-      "default": 4747
-    },
-    "browser": {
-      "type": "string",
-      "title": "Window",
-      "description": "auto: a tab in Orca's built-in browser when this session runs in Orca, else chrome-app. chrome-app: a dedicated Chrome app window (keeps the mic grant, lets the pane start calls). orca-browser: a tab in Orca's built-in browser (needs this session to run in Orca; falls back to chrome-app). terminal-browser: a split pane in your terminal (needs the terminal-browser CLI; falls back to chrome-app). default: your default browser.",
-      "options": ["auto", "chrome-app", "orca-browser", "terminal-browser", "default"],
-      "default": "auto"
     }
   }
 }

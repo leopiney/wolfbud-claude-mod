@@ -1,21 +1,22 @@
-/** The local bridge the mod spawns (bridge/server.mjs) and what it reported. */
-export type WolfbudBridge = {
-  status: 'off' | 'starting' | 'ready' | 'error'
-  /** The port it bound, reused on a reload so an open window reconnects. */
-  port: number
-  /** The session key every /api route checks, kept across reloads for the same reason. */
-  key: string
+/** The shared hub (bridge/server.mjs) and this session's subscription to it. */
+export type WolfbudHub = {
+  /** `off`: not started or stopped here. `ready`: subscribed. `down`: wanted, but the hub isn't answering. */
+  status: 'off' | 'ready' | 'down'
   error: string | null
   hasApiKey: boolean
   isWindowBuilt: boolean
   isWindowOpen: boolean
-  /** The person started it and hasn't stopped it: a reload brings it back. */
-  isWanted: boolean
-  /** Which spawn owns the state, so a dying old bridge can't clobber a new one. */
-  run: string
+  /** Stable across a reload. A new session mints another. */
+  sessionId: string
+  /** Pulls this session's inbox only. Not the key that can enqueue for every session. */
+  sessionToken: string
+  /** From ~/.wolfbud/hub.json. Subscribes. */
+  serviceToken: string
+  /** Short name the voice uses (`auth`, `auth-2`). */
+  name: string
 }
 
-/** The voice call, as the window reports it. */
+/** The one voice call, as the window reports it. Shared by every subscription. */
 export type WolfbudCall = {
   status: 'idle' | 'connecting' | 'live' | 'error'
   mode: 'speaking' | 'listening' | null
@@ -38,7 +39,7 @@ export type WolfbudClaude = {
 declare module 'claude-code' {
   interface PluginState {
     wolfbud: {
-      bridge: WolfbudBridge
+      hub: WolfbudHub
       call: WolfbudCall
       lines: WolfbudLine[]
       claude: WolfbudClaude

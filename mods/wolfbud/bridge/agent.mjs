@@ -76,7 +76,7 @@ export function syncPlan(definition) {
 }
 
 /** The readable part of an error body: its `detail`, or the detail's message. */
-function detailOf(text) {
+export function detailOf(text) {
   try {
     const { detail } = JSON.parse(text)
     if (typeof detail === 'string') return detail

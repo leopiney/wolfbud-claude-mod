@@ -1,4 +1,4 @@
-// What the mod, its bridge (bridge/server.mjs) and the window (window/src)
+// What the mod, the hub (bridge/server.mjs) and the window (window/src)
 // say to each other. Plain types with no imports, so the window imports them
 // too and the three halves can't drift.
 
@@ -28,21 +28,34 @@ export type ClaudeEvent =
     }
   | { kind: 'notification'; at: number; message: string; type: string }
 
-/** The session's facts the window shows and hands the agent. */
-export type SessionInfo = { project: string; cwd: string }
+/** One subscribed Claude, as the window's roster draws it. */
+export type RosterRow = {
+  id: string
+  name: string
+  project: string
+  isBusy: boolean
+  badge: number
+}
 
-/** One line the bridge writes on stdout for the mod: `WOLFBUD <json>`. */
-export type BridgeMessage =
-  | { t: 'ready'; port: number; hasApiKey: boolean; isWindowBuilt: boolean }
-  | { t: 'fatal'; error: string }
-  /** The agent it set up in the user's account, and the hash of the definition it synced. */
-  | { t: 'agent'; id: string; def: string }
-  | { t: 'window'; open: boolean; count: number }
-  | { t: 'status'; call: CallStatus; mode: VoiceMode | null; error?: string }
-  | { t: 'line'; role: 'user' | 'agent'; text: string }
-  | { t: 'snapshot' }
-  | { t: 'send'; id: string; prompt: string; when: 'now' | 'after_current'; summary: string }
-  | { t: 'stop'; id: string; reason: string }
+/** A command the hub holds until the matching mod pulls it. */
+export type HubCommand =
+  | { id: string; type: 'send'; prompt: string; when: 'now' | 'after_current'; summary: string }
+  | { id: string; type: 'stop'; reason: string }
+  | { id: string; type: 'snapshot' }
 
-/** What the mod asks of the newest window, through /api/command. */
-export type WindowCommand = 'start-call' | 'end-call'
+/** Something said on the call, queued for every subscribed pane. */
+export type HubLine = { role: 'user' | 'agent'; text: string }
+
+/** The one call, as the window last reported it. */
+export type HubCall = { status: CallStatus; mode: VoiceMode | null; error: string | null }
+
+/** What a pull of a session's inbox answers: its queue, plus the facts as they stand now. */
+export type PullResponse = {
+  commands: HubCommand[]
+  lines: HubLine[]
+  call: HubCall
+  isWindowOpen: boolean
+}
+
+/** What the hub asks of the window, over SSE. */
+export type WindowCommand = 'start-call' | 'end-call' | 'raise' | 'superseded'

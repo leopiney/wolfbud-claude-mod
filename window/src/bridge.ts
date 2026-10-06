@@ -1,24 +1,27 @@
 // The window's side of mods/wolfbud/bridge/server.mjs: Claude's activity in
 // over SSE, the call's state and the agent's requests out over POST.
 
-import type { CallStatus, ClaudeEvent, SessionInfo, VoiceMode, WindowCommand } from '../../mods/wolfbud/hooks/events'
+import type { CallStatus, ClaudeEvent, RosterRow, VoiceMode, WindowCommand } from '../../mods/wolfbud/hooks/events'
 
-export type Hello = { recent: ClaudeEvent[]; isClaudeBusy: boolean; session: Partial<SessionInfo> }
+export type RosterPayload = { focusedId: string | null; rows: RosterRow[] }
+
+/** The roster plus what each row has seen so far, on connect. */
+export type Hello = { focusedId: string | null; rows: Array<RosterRow & { recent: ClaudeEvent[]; snapshot: string }> }
+
+export type SessionEvent = { sessionId: string; event: ClaudeEvent }
 
 export type BridgeHandlers = {
   hello(hello: Hello): void
-  claude(event: ClaudeEvent): void
-  snapshot(text: string): void
-  session(session: SessionInfo): void
-  busy(isBusy: boolean): void
-  command(cmd: WindowCommand | 'superseded'): void
+  roster(roster: RosterPayload): void
+  claude(message: SessionEvent): void
+  snapshot(message: { sessionId: string; text: string }): void
+  command(cmd: WindowCommand): void
   connection(isConnected: boolean): void
 }
 
-/** The session key and whether to call right away, from `#k=…&call=1`. */
-export function readLaunch(): { key: string; wantsCall: boolean } {
-  const params = new URLSearchParams(location.hash.slice(1))
-  return { key: params.get('k') ?? '', wantsCall: params.get('call') === '1' }
+/** The window key, from `#k=…`. */
+export function readKey(): string {
+  return new URLSearchParams(location.hash.slice(1)).get('k') ?? ''
 }
 
 export class Bridge {
@@ -40,11 +43,10 @@ export class Bridge {
       this.handlers.connection(true)
       this.handlers.hello(hello)
     })
-    on<ClaudeEvent>('claude', event => this.handlers.claude(event))
-    on<{ text: string }>('snapshot', ({ text }) => this.handlers.snapshot(text))
-    on<SessionInfo>('session', session => this.handlers.session(session))
-    on<{ isClaudeBusy: boolean }>('busy', ({ isClaudeBusy }) => this.handlers.busy(isClaudeBusy))
-    on<{ cmd: WindowCommand | 'superseded' }>('command', ({ cmd }) => this.handlers.command(cmd))
+    on<RosterPayload>('roster', roster => this.handlers.roster(roster))
+    on<SessionEvent>('claude', message => this.handlers.claude(message))
+    on<{ sessionId: string; text: string }>('snapshot', message => this.handlers.snapshot(message))
+    on<{ cmd: WindowCommand }>('command', ({ cmd }) => this.handlers.command(cmd))
     // EventSource retries on its own; this only reports the gap.
     source.addEventListener('error', () => this.handlers.connection(false))
   }
@@ -81,16 +83,25 @@ export class Bridge {
     this.tell({ type: 'snapshot' })
   }
 
-  /** A conversation token for the agent, minted by the bridge with the API key it holds. */
+  /** A conversation token for the agent, minted by the hub with the API key it holds. */
   async token(): Promise<string> {
     const res = await fetch('/api/token', { headers: { 'x-wolfbud-key': this.key } })
     const data = (await res.json().catch(() => ({}))) as { token?: string; message?: string }
-    if (!res.ok || !data.token) throw new Error(data.message ?? `the bridge answered ${res.status}`)
+    if (!res.ok || !data.token) throw new Error(data.message ?? `the hub answered ${res.status}`)
     return data.token
   }
 
+  /** Points the one call at a subscribed session, by the short name the roster shows. */
+  focus(session: string): void {
+    this.tell({ type: 'focus', session })
+  }
+
   /** The agent's tool calls that act on Claude: resolve to the line the agent reads back. */
-  async ask(body: { type: 'send'; prompt: string; when: string; summary: string } | { type: 'stop'; reason: string }): Promise<string> {
+  async ask(
+    body:
+      | { type: 'send'; prompt: string; when: string; summary: string; session?: string }
+      | { type: 'stop'; reason: string; session?: string },
+  ): Promise<string> {
     try {
       const { data } = await this.post(body)
       return typeof data.message === 'string' && data.message !== '' ? data.message : 'Claude Code did not say what happened.'

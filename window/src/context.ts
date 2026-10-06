@@ -61,6 +61,16 @@ export function promptUpdate(event: PromptEvent): string | null {
   return `[claude activity] The user typed a new prompt to Claude in the terminal: "${clip(event.text, 600)}"`
 }
 
+/**
+ * The same moment, named for a session that is not the one the call is focused
+ * on. The agent should mention the short name; it is not the focused project.
+ */
+export function sessionSpoken(event: ClaudeEvent, name: string): string | null {
+  const spoken = spokenEvent(event)
+  if (spoken === null) return null
+  return spoken.replace('[claude event]', `[session event] ${name}:`)
+}
+
 /** The events worth saying out loud, as the "[claude event]" message the agent answers. */
 export function spokenEvent(event: ClaudeEvent): string | null {
   if (event.kind === 'turn-complete') {
