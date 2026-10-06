@@ -38,7 +38,7 @@ console.log(`Simulating a call with ${agentId}…\n`)
 const res = await client.conversationalAi.agents.simulateConversation(agentId, {
   simulationSpecification: {
     simulatedUserConfig: { firstMessage: 'Hey WolfBud.', language: 'en', prompt: { prompt: SIMULATED_USER } },
-    dynamicVariables: { project_name: 'shop' },
+    dynamicVariables: { project_name: 'shop', focused_session: 'shop', session_names: 'shop' },
     // Keyed by tool name: the window answers these for real.
     toolMockConfig: {
       wolfbud_claude_activity: { defaultReturnValue: ACTIVITY },

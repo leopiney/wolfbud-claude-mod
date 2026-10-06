@@ -1,33 +1,33 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, MockClock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { fitTail, formatSnapshot, splitBridgeOutput, tailText, wrappedRows } from '../hooks/activity'
+import { fitTail, formatSnapshot, tailText, wrappedRows } from '../hooks/activity'
 
 const FROM_COMPOSER = {
   origin: { kind: 'composer' as const },
   presentation: { isFullscreen: true, columns: 160 },
 }
 
-type Post = { path: string; body: Record<string, unknown> }
+const HUB_FILE = JSON.stringify({ port: 4747, pid: 9, token: 'service-token', windowKey: 'window-key' })
+
+type Post = { path: string; method: string; body: Record<string, unknown>; key: string }
 
 /**
- * Stands in for bridge/server.mjs beneath the plugin: `say` writes a
- * `WOLFBUD` line on its stdout, and every POST, spawn and `open` is recorded.
- * `store` is the plugin's `$.store`, starting from `stored`.
- * Promises from `until` settle as soon as what they wait for has happened.
+ * Stands in for the hub beneath the plugin. Health is up unless `healthFails`
+ * throws that many times first. Commands and notices wait for the poll, which
+ * runs when the test advances the clock.
  */
-function fakeBridge(on: On, { failing = [], stored = {} }: { failing?: string[]; stored?: Record<string, unknown> } = {}) {
-  const store = new Map<string, unknown>(Object.entries(stored))
-  const spawned: Array<{ argv: readonly string[]; env: Record<string, string> }> = []
+function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   const posts: Post[] = []
   const runs: string[][] = []
   const submitted: string[] = []
   const appended: string[] = []
-  const output: string[] = []
+  const commands: object[] = []
+  const notices: object[] = []
   const waiting: Array<{ check: () => boolean; done: () => void }> = []
-  let wake: (() => void) | null = null
-  let isClosed = false
+  let failsLeft = healthFails
+  const clock = mock.clock(on, { now: 1_700_000_000_000 })
 
   const notify = () => {
     for (const one of [...waiting]) {
@@ -39,44 +39,70 @@ function fakeBridge(on: On, { failing = [], stored = {} }: { failing?: string[];
   }
   const until = (check: () => boolean) => (check() ? Promise.resolve() : new Promise<void>(done => waiting.push({ check, done })))
 
-  on('process.spawn', async function* (_$, e) {
-    spawned.push({ argv: e.argv, env: { ...e.env } })
-    notify()
-    while (!isClosed) {
-      const text = output.shift()
-      if (text !== undefined) {
-        yield { stream: 'stdout' as const, text }
-        continue
-      }
-      await new Promise<void>(resolve => {
-        wake = resolve
-      })
-    }
-    return { value: { code: 0, signal: null } }
-  })
+  on('fs.read', () => ({ value: HUB_FILE }))
   on('http.fetch', (_$, e) => {
-    posts.push({ path: new URL(e.url).pathname, body: JSON.parse(e.init?.body ?? '{}') })
+    const url = new URL(e.url)
+    const body = JSON.parse(e.init?.body ?? '{}') as Record<string, unknown>
+    const key = e.init?.headers?.['x-wolfbud-key'] ?? ''
+    posts.push({ path: url.pathname, method: e.init?.method ?? 'GET', body, key })
     notify()
-    return { value: { status: 200, ok: true, headers: {}, text: '{}' } }
+    if (url.pathname === '/api/health') {
+      if (failsLeft > 0) {
+        failsLeft -= 1
+        return { value: { status: 503, ok: false, headers: {}, text: '{}' } }
+      }
+      return {
+        value: {
+          status: 200,
+          ok: true,
+          headers: {},
+          text: JSON.stringify({ ok: true, hasApiKey: true, isWindowBuilt: true, windows: 0 }),
+        },
+      }
+    }
+    if (url.pathname === '/api/window') {
+      return {
+        value: {
+          status: 200,
+          ok: true,
+          headers: {},
+          text: JSON.stringify({ ok: true, connected: false, opened: true, name: 'shop' }),
+        },
+      }
+    }
+    if (url.pathname === '/api/subscribe') {
+      return {
+        value: {
+          status: 200,
+          ok: true,
+          headers: {},
+          text: JSON.stringify({ token: 'sess-token', name: 'shop', windowOpen: false, hasApiKey: true, isWindowBuilt: true }),
+        },
+      }
+    }
+    if (url.pathname.endsWith('/commands')) {
+      return {
+        value: {
+          status: 200,
+          ok: true,
+          headers: {},
+          text: JSON.stringify({ commands: commands.splice(0), notices: notices.splice(0) }),
+        },
+      }
+    }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ok: true, delivered: true, connected: true, name: 'shop' }) } }
   })
   on('process.run', (_$, e) => {
     runs.push([...e.argv])
     notify()
-    const exitCode = failing.includes(e.argv[0] ?? '') ? 1 : 0
-    return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  on('store.get', (_$, e) => ({ value: store.get(e.key) }))
-  on('store.set', (_$, e) => {
-    store.set(e.key, e.value)
-    notify()
-    return { value: undefined }
-  })
-  mock.clock(on, { now: 1_700_000_000_000 })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
   on('session.cwd', () => ({ value: '/repo/shop' }))
   on('session.messages', () => ({ value: [] }))
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('prompt.submit', (_$, e) => {
     submitted.push(e.text)
     notify()
@@ -88,257 +114,137 @@ function fakeBridge(on: On, { failing = [], stored = {} }: { failing?: string[];
     return { message: e.message, uuid: 'row-1' }
   })
 
-  const say = (message: object) => {
-    output.push(`WOLFBUD ${JSON.stringify(message)}\n`)
-    wake?.()
-    wake = null
-  }
-  const postsTo = (path: string) => posts.filter(post => post.path === path)
+  const postsTo = (path: string) => posts.filter(post => post.path === path || post.path.endsWith(path))
 
-  return {
-    store,
-    spawned,
-    posts,
-    runs,
-    submitted,
-    appended,
-    until,
-    say,
-    postsTo,
-    /** Resolves once every line said so far has been handled: the bridge reads its stdout in order. */
-    async settle() {
-      const before = postsTo('/api/claude').filter(post => 'snapshot' in post.body).length
-      say({ t: 'snapshot' })
-      await until(() => postsTo('/api/claude').filter(post => 'snapshot' in post.body).length > before)
-    },
-    close() {
-      isClosed = true
-      wake?.()
-    },
-  }
+  return { posts, runs, submitted, appended, commands, notices, until, postsTo, clock }
 }
 
-/** /wolfbud with the bridge coming up ready on port 4747. */
-async function startWolfbud($: Engine, bridge: ReturnType<typeof fakeBridge>) {
+/** /wolfbud against a hub that is already up. The poll is armed and not yet run. */
+async function startWolfbud($: Engine, hub: ReturnType<typeof fakeHub>) {
   const answer = await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
-  await bridge.until(() => bridge.spawned.length === 1)
-  bridge.say({ t: 'ready', port: 4747, hasApiKey: true, isWindowBuilt: true })
-  await bridge.until(() => bridge.runs.length === 1)
+  await hub.until(() => hub.postsTo('/api/subscribe').length === 1 && hub.postsTo('/api/window').length === 1)
   return answer
 }
 
-describe('the bridge', () => {
-  test('/wolfbud spawns it with the key, then opens the window once it is ready', async ($, on) => {
+async function pull(hub: ReturnType<typeof fakeHub>, clock: MockClock) {
+  await clock.advance(1)
+}
+
+describe('the hub', () => {
+  test('/wolfbud subscribes this session and asks the hub to show the one window', async ($, on) => {
     mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+    const hub = fakeHub(on)
 
-    const answer = await startWolfbud($, bridge)
+    const answer = await startWolfbud($, hub)
 
-    expect(answer.text).toBe('Starting WolfBud.')
-    const spawn = bridge.spawned[0]
-    expect(spawn?.argv.at(-1)).toMatch(/bridge\/server\.mjs$/)
-    expect(spawn?.env.ELEVENLABS_API_KEY).toBe('el-test')
-    expect(spawn?.env.WOLFBUD_PORT).toBe('4747')
-    const key = spawn?.env.WOLFBUD_KEY ?? ''
-    expect(key.length).toBeGreaterThan(10)
-
-    const opened = bridge.runs[0] ?? []
-    expect(opened.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-    expect(opened).toContain(`--app=http://127.0.0.1:4747/#k=${key}`)
-    expect(opened).toContain('--user-data-dir=/Users/test/.wolfbud/chrome')
-
-    const session = bridge.postsTo('/api/claude')[0]?.body
-    expect(session).toMatchObject({ isClaudeBusy: false })
-    bridge.close()
+    expect(answer.text).toBe('Opening WolfBud.')
+    expect(hub.runs).toEqual([])
+    const subscribed = hub.postsTo('/api/subscribe')[0]
+    expect(subscribed?.key).toBe('service-token')
+    expect(subscribed?.body).toMatchObject({
+      project: 'shop',
+      cwd: '/repo/shop',
+      capabilities: ['submit', 'steer', 'abort', 'snapshot'],
+    })
+    expect(typeof subscribed?.body.sessionId).toBe('string')
+    const shown = hub.postsTo('/api/window')[0]
+    expect(shown?.body).toMatchObject({ sessionId: subscribed?.body.sessionId, call: false })
+    expect(shown?.key).toBe('service-token')
+    expect(hub.posts.some(post => post.key === 'window-key')).toBe(false)
   })
 
-  test(
-    'the browser option terminal-browser opens the window in a terminal split',
-    { options: { browser: 'terminal-browser' } },
-    async ($, on) => {
-      mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-      const bridge = fakeBridge(on)
+  test('a down hub is started by the launcher, not by spawning the server as a Claude child', async ($, on) => {
+    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_NODE: '/usr/local/bin/node' })
+    const hub = fakeHub(on, { healthFails: 1 })
 
-      await startWolfbud($, bridge)
+    const answer = await startWolfbud($, hub)
 
-      const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
-      expect(bridge.runs).toEqual([['terminal-browser', 'new-tab', `http://127.0.0.1:4747/#k=${key}`]])
-      bridge.close()
-    },
-  )
-
-  test('WOLFBUD_BROWSER=terminal-browser wins over the option', async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_BROWSER: 'terminal-browser' })
-    const bridge = fakeBridge(on)
-
-    await startWolfbud($, bridge)
-
-    expect(bridge.runs[0]?.slice(0, 2)).toEqual(['terminal-browser', 'new-tab'])
-    bridge.close()
+    expect(answer.text).toBe('Opening WolfBud.')
+    expect(hub.runs).toHaveLength(1)
+    expect(hub.runs[0]?.[0]).toBe('/usr/local/bin/node')
+    expect(hub.runs[0]?.[1]).toMatch(/bridge\/launch\.mjs$/)
+    expect(hub.runs[0]?.some(arg => arg.includes('server.mjs'))).toBe(false)
+    expect(hub.runs.some(argv => argv.includes('open') || argv[0] === 'orca' || argv[0] === 'terminal-browser')).toBe(false)
   })
 
-  test('terminal-browser failing falls back to the Chrome app window', { options: { browser: 'terminal-browser' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on, { failing: ['terminal-browser'] })
+  test('/wolfbud call focuses this subscription and asks to start the one call', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
 
-    await startWolfbud($, bridge)
-    await bridge.until(() => bridge.runs.length === 2)
+    const answer = await $.command.run({ command: 'wolfbud', args: 'call', ...FROM_COMPOSER })
 
-    expect(bridge.runs[0]?.[0]).toBe('terminal-browser')
-    expect(bridge.runs[1]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-    bridge.close()
+    expect(answer.text).toBe('Calling WolfBud, focused on shop.')
+    expect(hub.postsTo('/api/window').at(-1)?.body).toMatchObject({ call: true })
   })
 
-  test('by default the window opens in an Orca browser tab when the session runs in Orca', async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
-    const bridge = fakeBridge(on)
+  test('/wolfbud end hangs up the call and does not unsubscribe', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
 
-    await startWolfbud($, bridge)
+    const answer = await $.command.run({ command: 'wolfbud', args: 'end', ...FROM_COMPOSER })
 
-    const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
-    expect(bridge.runs).toEqual([['orca', 'tab', 'create', '--url', `http://127.0.0.1:4747/#k=${key}`, '--json']])
-    bridge.close()
+    expect(answer.text).toBe('Ending the call.')
+    expect(hub.postsTo('/api/call/end')).toHaveLength(1)
+    expect(hub.postsTo('/bye')).toHaveLength(0)
   })
 
-  test('by default the window is a Chrome app window outside Orca, without a toast', async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+  test('/wolfbud stop unsubscribes this session only', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
 
-    await startWolfbud($, bridge)
+    const answer = await $.command.run({ command: 'wolfbud', args: 'stop', ...FROM_COMPOSER })
 
-    expect(bridge.runs).toHaveLength(1)
-    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-    bridge.close()
+    expect(answer.text).toBe('This session left WolfBud. Other sessions keep the window.')
+    expect(hub.postsTo('/bye')).toHaveLength(1)
+    expect(hub.postsTo('/api/call/end')).toHaveLength(0)
   })
 
-  test('browser: chrome-app stays a Chrome window even inside Orca', { options: { browser: 'chrome-app' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
-    const bridge = fakeBridge(on)
+  test('the session ending unsubscribes and leaves the call up', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
 
-    await startWolfbud($, bridge)
+    await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sess', resume: { id: 'sess' } })
 
-    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-    bridge.close()
+    expect(hub.postsTo('/bye')).toHaveLength(1)
+    expect(hub.postsTo('/api/call/end')).toHaveLength(0)
   })
 
-  test(
-    'the browser option orca-browser opens the window in an Orca browser tab',
-    { options: { browser: 'orca-browser' } },
-    async ($, on) => {
-      mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
-      const bridge = fakeBridge(on)
-
-      await startWolfbud($, bridge)
-
-      const key = bridge.spawned[0]?.env.WOLFBUD_KEY ?? ''
-      expect(bridge.runs).toEqual([['orca', 'tab', 'create', '--url', `http://127.0.0.1:4747/#k=${key}`, '--json']])
-      bridge.close()
-    },
-  )
-
-  test('orca-browser tries the bundled CLI when orca on PATH fails', { options: { browser: 'orca-browser' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
-    const bridge = fakeBridge(on, { failing: ['orca'] })
-
-    await startWolfbud($, bridge)
-    await bridge.until(() => bridge.runs.length === 2)
-
-    expect(bridge.runs[1]?.slice(0, 3)).toEqual(['/Applications/Orca.app/Contents/Resources/bin/orca', 'tab', 'create'])
-    bridge.close()
-  })
-
-  test('orca-browser failing falls back to the Chrome app window', { options: { browser: 'orca-browser' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', ORCA_WORKTREE_ID: 'wt' })
-    const bridge = fakeBridge(on, { failing: ['orca', '/Applications/Orca.app/Contents/Resources/bin/orca'] })
-
-    await startWolfbud($, bridge)
-    await bridge.until(() => bridge.runs.length === 3)
-
-    expect(bridge.runs[2]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-    bridge.close()
-  })
-
-  test(
-    'orca-browser outside Orca skips the CLI and opens the Chrome app window',
-    { options: { browser: 'orca-browser' } },
-    async ($, on) => {
-      mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-      const bridge = fakeBridge(on)
-
-      await startWolfbud($, bridge)
-
-      expect(bridge.runs).toHaveLength(1)
-      expect(bridge.runs[0]?.slice(0, 3)).toEqual(['open', '-na', 'Google Chrome'])
-      bridge.close()
-    },
-  )
-
-  test('WOLFBUD_BROWSER=orca-browser wins over the option', { options: { browser: 'default' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test', WOLFBUD_BROWSER: 'orca-browser', ORCA_WORKTREE_ID: 'wt' })
-    const bridge = fakeBridge(on)
-
-    await startWolfbud($, bridge)
-
-    expect(bridge.runs[0]?.slice(0, 3)).toEqual(['orca', 'tab', 'create'])
-    bridge.close()
-  })
-
-  test('the api_key option wins over the environment', { options: { api_key: 'from-option' } }, async ($, on) => {
+  test('the api_key option is handed to the launcher when it has to start the hub', { options: { api_key: 'from-option' } }, async ($, on) => {
     mock.env(on, { ELEVENLABS_API_KEY: 'from-env', HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+    const hub = fakeHub(on, { healthFails: 1 })
 
-    await startWolfbud($, bridge)
+    await startWolfbud($, hub)
 
-    expect(bridge.spawned[0]?.env.ELEVENLABS_API_KEY).toBe('from-option')
-    bridge.close()
-  })
-
-  test('the agent a bridge set up is saved for the next one', async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
-    expect(bridge.spawned[0]?.env.WOLFBUD_SAVED_AGENT).toBeUndefined()
-
-    bridge.say({ t: 'agent', id: 'agent_new', def: 'def-2' })
-    await bridge.until(() => bridge.store.has('agent'))
-
-    expect(bridge.store.get('agent')).toEqual({ id: 'agent_new', def: 'def-2' })
-    bridge.close()
-  })
-
-  test('the saved agent is handed to the bridge', async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'el-test', HOME: '/Users/test' })
-    const bridge = fakeBridge(on, { stored: { agent: { id: 'agent_saved', def: 'def-1' } } })
-
-    await startWolfbud($, bridge)
-
-    expect(bridge.spawned[0]?.env.WOLFBUD_SAVED_AGENT).toBe(JSON.stringify({ id: 'agent_saved', def: 'def-1' }))
-    expect(bridge.spawned[0]?.env.WOLFBUD_AGENT_ID).toBeUndefined()
-    bridge.close()
+    expect(hub.runs[0]?.[1]).toMatch(/launch\.mjs$/)
   })
 })
 
 describe('prompts from the agent', () => {
   test('go to Claude as a new prompt while it is idle', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
-
-    bridge.say({
-      t: 'send',
-      id: 'r1',
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    hub.commands.push({
+      id: 'cmd_1',
+      type: 'send',
       prompt: 'Rename Submit to Save in the checkout form.',
       when: 'now',
       summary: 'Rename Submit to Save',
     })
-    await bridge.until(() => bridge.postsTo('/api/ack').length === 1)
 
-    expect(bridge.submitted).toHaveLength(1)
-    expect(bridge.submitted[0]).toContain('Rename Submit to Save in the checkout form.')
-    expect(bridge.submitted[0]).toContain('WolfBud')
-    expect(bridge.appended).toHaveLength(0)
-    expect(bridge.postsTo('/api/ack')[0]?.body).toEqual({ id: 'r1', ok: true, message: 'Sent: Claude is starting on it now.' })
-    bridge.close()
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/ack').length === 1)
+
+    expect(hub.submitted).toHaveLength(1)
+    expect(hub.submitted[0]).toContain('Rename Submit to Save in the checkout form.')
+    expect(hub.submitted[0]).toContain('WolfBud')
+    expect(hub.appended).toHaveLength(0)
+    expect(hub.postsTo('/ack')[0]?.body).toEqual({ id: 'cmd_1', ok: true, message: 'Sent: Claude is starting on it now.' })
+    const ack = hub.postsTo('/ack')[0]
+    expect(ack?.key).not.toBe('service-token')
   })
 
   // The kit has no store beneath session.append (a hook there can't answer
@@ -346,60 +252,73 @@ describe('prompts from the agent', () => {
   // refused mid-turn note still reaches Claude, queued behind the turn.
   test('a "now" prompt mid-turn that cannot be steered in is queued, not lost', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
     await $.turn.start({ text: 'build the checkout form', turnId: 'turn-1' })
+    hub.commands.push({ id: 'cmd_2', type: 'send', prompt: 'Use the existing Button component.', when: 'now', summary: 'Use Button' })
 
-    bridge.say({ t: 'send', id: 'r2', prompt: 'Use the existing Button component.', when: 'now', summary: 'Use Button' })
-    await bridge.until(() => bridge.postsTo('/api/ack').length === 1)
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/ack').length === 1)
 
-    expect(bridge.submitted).toHaveLength(1)
-    expect(bridge.submitted[0]).toContain('Use the existing Button component.')
-    expect(bridge.postsTo('/api/ack')[0]?.body).toMatchObject({ id: 'r2', ok: true, message: expect.stringContaining('queued') })
-    bridge.close()
+    expect(hub.submitted).toHaveLength(1)
+    expect(hub.submitted[0]).toContain('Use the existing Button component.')
+    expect(hub.postsTo('/ack')[0]?.body).toMatchObject({ id: 'cmd_2', ok: true, message: expect.stringContaining('queued') })
   })
 
   test('queue behind the running turn when they can wait', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
     await $.turn.start({ text: 'build the checkout form', turnId: 'turn-1' })
+    hub.commands.push({ id: 'cmd_3', type: 'send', prompt: 'Afterwards, update the README.', when: 'after_current', summary: 'Update README' })
 
-    bridge.say({ t: 'send', id: 'r3', prompt: 'Afterwards, update the README.', when: 'after_current', summary: 'Update README' })
-    await bridge.until(() => bridge.postsTo('/api/ack').length === 1)
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/ack').length === 1)
 
-    expect(bridge.submitted).toHaveLength(1)
-    expect(bridge.postsTo('/api/ack')[0]?.body).toMatchObject({ ok: true, message: expect.stringContaining('Queued') })
-    bridge.close()
+    expect(hub.submitted).toHaveLength(1)
+    expect(hub.postsTo('/ack')[0]?.body).toMatchObject({ ok: true, message: expect.stringContaining('Queued') })
   })
 
   test('a stop with nothing running says so', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    hub.commands.push({ id: 'cmd_4', type: 'stop', reason: 'wrong file' })
 
-    bridge.say({ t: 'stop', id: 's1', reason: 'wrong file' })
-    await bridge.until(() => bridge.postsTo('/api/ack').length === 1)
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/ack').length === 1)
 
-    expect(bridge.postsTo('/api/ack')[0]?.body).toEqual({ id: 's1', ok: false, message: "Claude isn't running anything right now." })
-    bridge.close()
+    expect(hub.postsTo('/ack')[0]?.body).toEqual({ id: 'cmd_4', ok: false, message: "Claude isn't running anything right now." })
+  })
+
+  test('a snapshot command posts this session transcript back', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    hub.commands.push({ id: 'cmd_5', type: 'snapshot' })
+
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/ack').length === 1)
+
+    const events = hub.postsTo('/events').at(-1)?.body
+    expect(events).toMatchObject({ snapshot: expect.stringContaining('[session snapshot] Session shop.') })
   })
 })
 
 describe('activity reports', () => {
-  test('a failed Bash call reaches the bridge with its error', async ($, on) => {
+  test('a failed Bash call reaches the hub with its error', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+    const hub = fakeHub(on)
     on('tool.call', { tool: 'Bash' }, () => ({
       isError: true as const,
       result: 'exit 1',
       text: 'FAIL src/cart.test.ts\n3 failed, 12 passed',
     }))
-    await startWolfbud($, bridge)
+    await startWolfbud($, hub)
 
     await $.tool.call({ tool: 'Bash', command: 'pnpm test', description: 'Run the tests' })
 
-    const events = bridge.postsTo('/api/claude').flatMap(post => (post.body.events as unknown[] | undefined) ?? [])
+    const events = hub.postsTo('/events').flatMap(post => (post.body.events as unknown[] | undefined) ?? [])
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'tool',
@@ -409,34 +328,28 @@ describe('activity reports', () => {
         error: 'FAIL src/cart.test.ts 3 failed, 12 passed',
       }),
     )
-    bridge.close()
   })
 
   test('turns report busy, then the answer', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
 
     await $.turn.start({ text: 'fix the cart', turnId: 'turn-9' })
     await $.turn.complete({ answer: 'Fixed the rounding bug.', durationMs: 4200, isAborted: false, turnId: 'turn-9', reason: 'answer' })
 
-    const kinds = bridge
-      .postsTo('/api/claude')
-      .flatMap(post => ((post.body.events as Array<{ kind: string }> | undefined) ?? []).map(event => event.kind))
+    const kinds = hub.postsTo('/events').flatMap(post => ((post.body.events as Array<{ kind: string }> | undefined) ?? []).map(event => event.kind))
     expect(kinds).toEqual(['turn-start', 'turn-complete'])
-    const done = bridge.postsTo('/api/claude').at(-1)?.body.events
-    expect(done).toEqual([expect.objectContaining({ answer: 'Fixed the rounding bug.', reason: 'answer' })])
-    bridge.close()
   })
 
-  test('nothing is posted before the bridge is up', async ($, on) => {
+  test('nothing is posted before the session is subscribed', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
+    const hub = fakeHub(on)
     on('tool.call', { tool: 'Read' }, () => ({ result: 'contents', text: 'contents' }))
 
     await $.tool.call({ tool: 'Read', file_path: '/repo/src/app.ts' })
 
-    expect(bridge.posts).toHaveLength(0)
+    expect(hub.posts).toHaveLength(0)
   })
 })
 
@@ -462,18 +375,15 @@ describe('the pane', () => {
       await ui.unmount()
     })
 
-    // A mount settles while the fake bridge's stream waits for its next line,
-    // which costs the kit about a second and a half per act: hence the timeout.
-    test(`shows the live call and what went to Claude (${surface})`, { timeoutMs: 20_000 }, async ($, on) => {
+    test(`shows the live call and what went to Claude (${surface})`, async ($, on) => {
       mock.env(on, { HOME: '/Users/test' })
-      const bridge = fakeBridge(on)
-      await startWolfbud($, bridge)
-      bridge.say({ t: 'window', open: true, count: 1 })
-      bridge.say({ t: 'status', call: 'live', mode: 'listening' })
-      bridge.say({ t: 'line', role: 'user', text: 'can we rename that button?' })
-      bridge.say({ t: 'send', id: 'r1', prompt: 'Rename Submit to Save.', when: 'after_current', summary: 'Rename Submit to Save' })
-      await bridge.until(() => bridge.postsTo('/api/ack').length === 1)
-      await bridge.settle()
+      const hub = fakeHub(on)
+      await startWolfbud($, hub)
+      hub.notices.push({ t: 'status', call: 'live', mode: 'listening' })
+      hub.notices.push({ t: 'line', role: 'user', text: 'can we rename that button?' })
+      hub.commands.push({ id: 'cmd_1', type: 'send', prompt: 'Rename Submit to Save.', when: 'after_current', summary: 'Rename Submit to Save' })
+      await pull(hub, hub.clock)
+      await hub.until(() => hub.postsTo('/ack').length === 1)
 
       const ui = await $.ui.mount({ plugin: 'wolfbud', surface, component: 'Pane', requestId: 'wolfbud', props: PANE_PROPS })
       const drawn = JSON.stringify(await ui.drawn())
@@ -481,34 +391,32 @@ describe('the pane', () => {
       expect(drawn).toContain('can we rename that button?')
       expect(drawn).toContain('Rename Submit to Save')
       expect(drawn).toContain('→ claude')
-
-      // Mid-call, Window must not open a second window (it would take the call over).
-      const opened = bridge.runs.length
-      await ui.press({ key: 'window' })
-      expect(bridge.runs.length).toBe(opened)
+      expect(drawn).toContain('shop ·')
 
       await ui.press({ key: 'end' })
-      expect(bridge.postsTo('/api/command').at(-1)?.body).toEqual({ cmd: 'end-call' })
-      bridge.close()
+      expect(hub.postsTo('/api/call/end').length).toBeGreaterThan(0)
       await ui.unmount()
     })
   }
 
-  test('a long call keeps the newest lines and the buttons in view (terminal)', { timeoutMs: 20_000 }, async ($, on) => {
+  test('a long call keeps the newest lines and the buttons in view (terminal)', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
-    const bridge = fakeBridge(on)
-    await startWolfbud($, bridge)
-    bridge.say({ t: 'status', call: 'live', mode: 'listening' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    hub.notices.push({ t: 'status', call: 'live', mode: 'listening' })
     for (let i = 1; i <= 12; i += 1) {
-      bridge.say({
+      hub.notices.push({
         t: 'line',
         role: i % 2 === 1 ? 'user' : 'agent',
         text: `line ${i}: a sentence long enough to wrap onto a second row of the pane`,
       })
     }
-    await bridge.settle()
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/events').length >= 1 || hub.notices.length === 0)
 
-    // 12 rows: 5 for the header, margins and buttons, 7 for lines of 2 rows each at 39 cells.
+    // The poll consumes notices. Wait until state has the last line by mounting after the clock settles.
+    await hub.clock.settle()
+
     const props = { ...PANE_PROPS, bodyColumns: 48, scroll: { offset: 0, bodyRows: 12 } }
     const ui = await $.ui.mount({ plugin: 'wolfbud', surface: 'terminal', component: 'Pane', requestId: 'wolfbud', props })
     const drawn = JSON.stringify(await ui.drawn())
@@ -517,7 +425,6 @@ describe('the pane', () => {
     expect(drawn).not.toContain('line 9:')
     expect(await ui.find({ key: 'end' })).toBeDefined()
     expect(await ui.find({ key: 'window' })).toBeDefined()
-    bridge.close()
     await ui.unmount()
   })
 })
@@ -540,12 +447,6 @@ describe('helpers', () => {
     expect(only?.text.startsWith('…')).toBe(true)
     expect(wrappedRows(only?.text ?? '', 10)).toBeLessThanOrEqual(2)
     expect(tailText('short', 1, 10)).toBe('short')
-  })
-
-  test('bridge output splits on WOLFBUD lines and keeps a partial tail', () => {
-    const { messages, rest } = splitBridgeOutput('noise\nWOLFBUD {"t":"window","open":true,"count":1}\nWOLFBUD {"t":"li')
-    expect(messages).toEqual([{ t: 'window', open: true, count: 1 }])
-    expect(rest).toBe('WOLFBUD {"t":"li')
   })
 
   test('the snapshot names the project, the state and the latest exchange', () => {

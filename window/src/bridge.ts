@@ -1,17 +1,36 @@
 // The window's side of mods/wolfbud/bridge/server.mjs: Claude's activity in
 // over SSE, the call's state and the agent's requests out over POST.
 
-import type { CallStatus, ClaudeEvent, SessionInfo, VoiceMode, WindowCommand } from '../../mods/wolfbud/hooks/events'
+import type { CallStatus, ClaudeEvent, RosterRow, VoiceMode, WindowCommand } from '../../mods/wolfbud/hooks/events'
 
-export type Hello = { recent: ClaudeEvent[]; isClaudeBusy: boolean; session: Partial<SessionInfo> }
+export type Hello = {
+  rows: RosterRow[]
+  focusedId: string | null
+  recent: ClaudeEvent[]
+  snapshot: string
+  call: CallStatus
+}
+
+export type RosterPayload = { focusedId: string | null; rows: RosterRow[] }
+
+export type FocusPayload = {
+  id: string | null
+  name: string | null
+  project: string
+  recent: ClaudeEvent[]
+  snapshot: string
+  isBusy: boolean
+}
+
+export type SessionEvent = { sessionId: string; name: string; event: ClaudeEvent }
 
 export type BridgeHandlers = {
   hello(hello: Hello): void
-  claude(event: ClaudeEvent): void
-  snapshot(text: string): void
-  session(session: SessionInfo): void
-  busy(isBusy: boolean): void
-  command(cmd: WindowCommand | 'superseded'): void
+  roster(roster: RosterPayload): void
+  focus(focus: FocusPayload): void
+  claude(message: SessionEvent): void
+  snapshot(message: { sessionId: string; name: string; text: string }): void
+  command(cmd: WindowCommand): void
   connection(isConnected: boolean): void
 }
 
@@ -40,11 +59,11 @@ export class Bridge {
       this.handlers.connection(true)
       this.handlers.hello(hello)
     })
-    on<ClaudeEvent>('claude', event => this.handlers.claude(event))
-    on<{ text: string }>('snapshot', ({ text }) => this.handlers.snapshot(text))
-    on<SessionInfo>('session', session => this.handlers.session(session))
-    on<{ isClaudeBusy: boolean }>('busy', ({ isClaudeBusy }) => this.handlers.busy(isClaudeBusy))
-    on<{ cmd: WindowCommand | 'superseded' }>('command', ({ cmd }) => this.handlers.command(cmd))
+    on<RosterPayload>('roster', roster => this.handlers.roster(roster))
+    on<FocusPayload>('focus', focus => this.handlers.focus(focus))
+    on<SessionEvent>('claude', message => this.handlers.claude(message))
+    on<{ sessionId: string; name: string; text: string }>('snapshot', message => this.handlers.snapshot(message))
+    on<{ cmd: WindowCommand }>('command', ({ cmd }) => this.handlers.command(cmd))
     // EventSource retries on its own; this only reports the gap.
     source.addEventListener('error', () => this.handlers.connection(false))
   }
@@ -89,8 +108,17 @@ export class Bridge {
     return data.token
   }
 
+  /** Points the one call at a subscribed session, by the short name the roster shows. */
+  focus(session: string): void {
+    this.tell({ type: 'focus', session })
+  }
+
   /** The agent's tool calls that act on Claude: resolve to the line the agent reads back. */
-  async ask(body: { type: 'send'; prompt: string; when: string; summary: string } | { type: 'stop'; reason: string }): Promise<string> {
+  async ask(
+    body:
+      | { type: 'send'; prompt: string; when: string; summary: string; session?: string }
+      | { type: 'stop'; reason: string; session?: string },
+  ): Promise<string> {
     try {
       const { data } = await this.post(body)
       return typeof data.message === 'string' && data.message !== '' ? data.message : 'Claude Code did not say what happened.'

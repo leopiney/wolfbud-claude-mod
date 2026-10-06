@@ -59,7 +59,7 @@ There are two more cuts of the same session: [How it works](https://github.com/u
 
 The mod itself is in [`mods/wolfbud`](mods/wolfbud); its [README](mods/wolfbud/README.md) has the full architecture, commands and options.
 
-> **Optimized for [Orca](https://orca.build).** Run Claude Code in an Orca terminal and WolfBud opens its window as a tab in Orca's built-in browser (the default `browser: auto` picks it inside Orca). Orca needs mic access allowed; see [In Orca](mods/wolfbud/README.md#in-orca-orca-browser) for the setup. Outside Orca, or if that fails, it opens a Chrome app window.
+> **One wolf for every Claude session.** `/wolfbud` subscribes the current session to a single hub and a single Chrome window. Several sessions can sit under that one call. The window is a Chrome app with its own profile, not a tab in Orca or a terminal split.
 
 ## Quick start
 
@@ -93,8 +93,8 @@ Working on WolfBud itself? Clone the repo and run `claude --plugin-dir ./mods/wo
 ## Your key, your agent
 
 - The agent is created in **your** ElevenLabs account the first time you use WolfBud, and the calls are billed to it.
-- The API key stays in the local bridge (127.0.0.1 only); it never reaches the browser window.
-- The bridge checks a per-session key and rejects foreign `Host` and `Origin` headers, so a web page can't push prompts into Claude's chat.
+- The API key stays in the local hub (127.0.0.1:4747 only); it never reaches the browser window.
+- The window's key is not a session's key. A session token can pull that session's inbox and cannot enqueue prompts for every session. Foreign `Host` and `Origin` headers are rejected.
 
 ## Repo layout
 

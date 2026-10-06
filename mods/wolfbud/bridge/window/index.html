@@ -6,14 +6,16 @@
     <meta name="color-scheme" content="dark" />
     <title>WolfBud</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐺</text></svg>" />
-    <script type="module" crossorigin src="./assets/index-vAxWa-G6.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Dl8SoQ1Y.css">
+    <script type="module" crossorigin src="./assets/index-BWbA25gR.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-D-tImMZp.css">
   </head>
   <body>
     <main id="app" class="app" data-call="idle" data-mode="listening" data-claude="idle" data-hearing="no" data-wolf="shown">
       <header class="top">
-        <span class="claude-chip"><span class="claude-dot"></span><span id="claude-status">Claude is idle</span></span>
+        <span class="claude-chip"><span class="claude-dot"></span><span id="claude-status">No session yet</span></span>
       </header>
+
+      <nav id="roster" class="roster" hidden></nav>
 
       <section id="stage" class="stage">
         <button id="badge" class="badge" type="button" aria-label="Pet WolfBud">
@@ -29,7 +31,7 @@
       </section>
 
       <section class="activity">
-        <h2>Claude</h2>
+        <h2>Focused session</h2>
         <ul id="feed" class="feed"></ul>
       </section>
 

@@ -4,10 +4,6 @@
 
 import type { SessionMessage } from 'claude-code'
 
-import type { BridgeMessage } from './events'
-
-const BRIDGE_PREFIX = 'WOLFBUD '
-
 /** Collapses whitespace and cuts to `max` characters with an ellipsis. */
 export function clip(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -87,7 +83,7 @@ const SNAPSHOT_BUDGET = 6000
  */
 export function formatSnapshot(
   messages: readonly SessionMessage[],
-  info: { project: string; isBusy: boolean },
+  info: { project: string; isBusy: boolean; name?: string },
 ): string {
   const rows: string[] = []
   for (const message of messages.slice(-SNAPSHOT_MESSAGES)) {
@@ -110,29 +106,11 @@ export function formatSnapshot(
   let body = rows.join('\n')
   if (body.length > SNAPSHOT_BUDGET) body = `…${body.slice(-SNAPSHOT_BUDGET)}`
   const status = info.isBusy ? 'Claude is working on a task right now.' : 'Claude is idle, waiting for the user.'
+  const who = info.name ? `Session ${info.name}. ` : ''
   return [
-    `[session snapshot] Project: ${info.project}. ${status}`,
+    `[session snapshot] ${who}Project: ${info.project}. ${status}`,
     body === '' ? 'Nothing has happened in this session yet.' : `Latest conversation between the user and Claude, oldest first:\n${body}`,
   ].join('\n')
-}
-
-/**
- * Splits bridge output into its `WOLFBUD <json>` messages; `rest` is a
- * trailing partial line to prepend to the next chunk. Other lines are dropped.
- */
-export function splitBridgeOutput(buffer: string): { messages: BridgeMessage[]; rest: string } {
-  const lines = buffer.split('\n')
-  const rest = lines.pop() ?? ''
-  const messages: BridgeMessage[] = []
-  for (const line of lines) {
-    if (!line.startsWith(BRIDGE_PREFIX)) continue
-    try {
-      messages.push(JSON.parse(line.slice(BRIDGE_PREFIX.length)) as BridgeMessage)
-    } catch {
-      // A malformed line is the bridge's bug, not a reason to stop reading.
-    }
-  }
-  return { messages, rest }
 }
 
 /**

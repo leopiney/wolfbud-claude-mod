@@ -2,7 +2,7 @@
   "$comment": "The WolfBud voice agent, owned in code. Each user's bridge pushes this file (and promptFile) to their own ElevenLabs account when it changes (bridge/agent.mjs); `pnpm agent:sync` does it by hand. Tool names are the contract with the window's clientTools (window/src/tools.ts): rename both or neither. Renaming the agent creates a new one on the next sync.",
   "name": "WolfBud Cowork",
   "promptFile": "prompt.md",
-  "firstMessage": "Hey, it's WolfBud. I've got eyes on Claude's session. What's on your mind?",
+  "firstMessage": "Hey, it's WolfBud. I've got eyes on your Claude sessions. What's on your mind?",
   "language": "en",
   "llm": "deepseek-v41-flash",
   "temperature": 0.3,
@@ -28,7 +28,9 @@
     ]
   },
   "dynamicVariables": {
-    "project_name": "the current project"
+    "project_name": "the current project",
+    "focused_session": "the focused session",
+    "session_names": "none yet"
   },
   "requireSignedToken": true,
   "endCallTool": true,
@@ -36,11 +38,15 @@
     {
       "type": "client",
       "name": "wolfbud_send_to_claude",
-      "description": "Sends a prompt to Claude Code, the coding agent in the user's terminal, as a message in its chat. Call it when the user asks for something to be done, changed, fixed, investigated or decided in the code, or agrees to a plan you discussed (\"yeah, do that\", \"tell Claude to...\", \"let's go with the second one\"). Write `prompt` as a clear, self-contained instruction in the user's voice that Claude can act on without having heard this call. Returns how it was delivered (started now, delivered mid-task, or queued) or why it failed. Do not call it for chit-chat or half-formed ideas. Nothing reaches Claude unless you call this: never say you sent or queued something without calling it in the same response.",
+      "description": "Sends a prompt to one Claude Code session, as a message in its chat. Call it when the user asks for something to be done, changed, fixed, investigated or decided in the code, or agrees to a plan you discussed (\"yeah, do that\", \"tell Claude to...\", \"let's go with the second one\"). Pass `session` when they name a short name from the roster; omit it for the focused session. You may call it more than once in one turn, once per session. Write `prompt` as a clear, self-contained instruction in the user's voice that Claude can act on without having heard this call. Returns how it was delivered (started now, delivered mid-task, or queued) or why it failed. Do not call it for chit-chat or half-formed ideas. Nothing reaches Claude unless you call this: never say you sent or queued something without calling it in the same response.",
       "parameters": {
         "type": "object",
         "required": ["prompt", "when", "summary"],
         "properties": {
+          "session": {
+            "type": "string",
+            "description": "Short name of the Claude session to send to (auth, shop-2), as the roster shows it. Omit to use the focused session."
+          },
           "prompt": {
             "type": "string",
             "description": "The instruction for Claude, first person as the user (\"Rename the Submit button to Save in the checkout form and update its tests.\"). Include the decisions, constraints, names of files or functions mentioned, and what done looks like. No greetings, no mention of this call."
@@ -62,11 +68,15 @@
     {
       "type": "client",
       "name": "wolfbud_stop_claude",
-      "description": "Interrupts Claude Code's current task, like pressing Escape in the terminal. Call it ONLY when the user explicitly asks to stop, cancel or interrupt Claude. If they also want a different direction, call wolfbud_send_to_claude right after. Returns whether anything was running.",
+      "description": "Interrupts one Claude Code session's current task, like pressing Escape in that terminal. Call it ONLY when the user explicitly asks to stop, cancel or interrupt Claude. Pass `session` when they name one; omit it for the focused session. If they also want a different direction, call wolfbud_send_to_claude right after. Returns whether anything was running.",
       "parameters": {
         "type": "object",
         "required": ["reason"],
         "properties": {
+          "session": {
+            "type": "string",
+            "description": "Short name of the Claude session to stop. Omit to use the focused session."
+          },
           "reason": {
             "type": "string",
             "description": "A few words on why the user wants Claude stopped (\"it is editing the wrong file\")."
@@ -79,11 +89,15 @@
     {
       "type": "client",
       "name": "wolfbud_claude_activity",
-      "description": "Looks up what Claude Code has been doing in this session, in more detail than the activity notes you receive. Call it when the user asks what Claude did, said or changed, why something failed, or whether things are going well, and the notes you have do not answer it. Returns plain text to summarize, never to read verbatim.",
+      "description": "Looks up what one Claude Code session has been doing, in more detail than the activity notes you receive. Call it when the user asks what Claude did, said or changed, why something failed, or whether things are going well, and the notes you have do not answer it. Pass `session` when they name one; omit it for the focused session. Returns plain text to summarize, never to read verbatim.",
       "parameters": {
         "type": "object",
         "required": ["focus"],
         "properties": {
+          "session": {
+            "type": "string",
+            "description": "Short name of the Claude session to look up. Omit to use the focused session."
+          },
           "focus": {
             "type": "string",
             "enum": ["last_answer", "recent_steps", "errors", "overview"],
