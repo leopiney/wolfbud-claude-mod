@@ -3,41 +3,25 @@
 
 import type { CallStatus, ClaudeEvent, RosterRow, VoiceMode, WindowCommand } from '../../mods/wolfbud/hooks/events'
 
-export type Hello = {
-  rows: RosterRow[]
-  focusedId: string | null
-  recent: ClaudeEvent[]
-  snapshot: string
-  call: CallStatus
-}
-
 export type RosterPayload = { focusedId: string | null; rows: RosterRow[] }
 
-export type FocusPayload = {
-  id: string | null
-  name: string | null
-  project: string
-  recent: ClaudeEvent[]
-  snapshot: string
-  isBusy: boolean
-}
+/** The roster plus what each row has seen so far, on connect. */
+export type Hello = { focusedId: string | null; rows: Array<RosterRow & { recent: ClaudeEvent[]; snapshot: string }> }
 
-export type SessionEvent = { sessionId: string; name: string; event: ClaudeEvent }
+export type SessionEvent = { sessionId: string; event: ClaudeEvent }
 
 export type BridgeHandlers = {
   hello(hello: Hello): void
   roster(roster: RosterPayload): void
-  focus(focus: FocusPayload): void
   claude(message: SessionEvent): void
-  snapshot(message: { sessionId: string; name: string; text: string }): void
+  snapshot(message: { sessionId: string; text: string }): void
   command(cmd: WindowCommand): void
   connection(isConnected: boolean): void
 }
 
-/** The session key and whether to call right away, from `#k=…&call=1`. */
-export function readLaunch(): { key: string; wantsCall: boolean } {
-  const params = new URLSearchParams(location.hash.slice(1))
-  return { key: params.get('k') ?? '', wantsCall: params.get('call') === '1' }
+/** The window key, from `#k=…`. */
+export function readKey(): string {
+  return new URLSearchParams(location.hash.slice(1)).get('k') ?? ''
 }
 
 export class Bridge {
@@ -60,9 +44,8 @@ export class Bridge {
       this.handlers.hello(hello)
     })
     on<RosterPayload>('roster', roster => this.handlers.roster(roster))
-    on<FocusPayload>('focus', focus => this.handlers.focus(focus))
     on<SessionEvent>('claude', message => this.handlers.claude(message))
-    on<{ sessionId: string; name: string; text: string }>('snapshot', message => this.handlers.snapshot(message))
+    on<{ sessionId: string; text: string }>('snapshot', message => this.handlers.snapshot(message))
     on<{ cmd: WindowCommand }>('command', ({ cmd }) => this.handlers.command(cmd))
     // EventSource retries on its own; this only reports the gap.
     source.addEventListener('error', () => this.handlers.connection(false))
@@ -100,11 +83,11 @@ export class Bridge {
     this.tell({ type: 'snapshot' })
   }
 
-  /** A conversation token for the agent, minted by the bridge with the API key it holds. */
+  /** A conversation token for the agent, minted by the hub with the API key it holds. */
   async token(): Promise<string> {
     const res = await fetch('/api/token', { headers: { 'x-wolfbud-key': this.key } })
     const data = (await res.json().catch(() => ({}))) as { token?: string; message?: string }
-    if (!res.ok || !data.token) throw new Error(data.message ?? `the bridge answered ${res.status}`)
+    if (!res.ok || !data.token) throw new Error(data.message ?? `the hub answered ${res.status}`)
     return data.token
   }
 

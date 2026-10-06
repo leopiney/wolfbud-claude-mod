@@ -3,9 +3,9 @@
 
 import './style.css'
 
-import type { ClaudeEvent } from '../../mods/wolfbud/hooks/events'
-import { Bridge, readLaunch } from './bridge'
-import type { FocusPayload, RosterPayload, SessionEvent } from './bridge'
+import type { ClaudeEvent, RosterRow } from '../../mods/wolfbud/hooks/events'
+import { Bridge, readKey } from './bridge'
+import type { Hello, RosterPayload, SessionEvent } from './bridge'
 import { WolfCall } from './call'
 import { activityAnswer, activityUpdate, feedLine, promptUpdate, quietEvent, sessionSpoken, spokenEvent } from './context'
 import { createWolf } from './wolf'
@@ -18,17 +18,8 @@ const BADGE_MAX = 236
 const BADGE_MIN = 64
 const RING_OUTSET = 7
 
-type Tracked = {
-  id: string
-  name: string
-  project: string
-  cwd: string
-  isBusy: boolean
-  badge: number
-  events: ClaudeEvent[]
-  snapshot: string
-  busySince: number
-}
+/** A roster row plus what this window has seen of it. The hub owns `isBusy` and `badge`. */
+type Tracked = RosterRow & { events: ClaudeEvent[]; snapshot: string; busySince: number }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const app = $('app')
@@ -84,6 +75,10 @@ function named(name: string | null): Tracked | null {
   return [...sessions.values()].find(row => row.name.toLowerCase() === wanted) ?? null
 }
 
+/**
+ * The roster as the hub sends it: rows come and go, busy and badge are the
+ * hub's word. A change of focus briefs the agent on the new session.
+ */
 function applyRoster(payload: RosterPayload): void {
   const seen = new Set<string>()
   for (const row of payload.rows) {
@@ -91,23 +86,31 @@ function applyRoster(payload: RosterPayload): void {
     const current = sessions.get(row.id)
     const becameBusy = row.isBusy && current?.isBusy !== true
     sessions.set(row.id, {
-      events: [],
-      snapshot: '',
-      ...current,
-      id: row.id,
-      name: row.name,
-      project: row.project,
-      cwd: row.cwd,
-      isBusy: row.isBusy,
-      badge: row.badge,
+      ...row,
+      events: current?.events ?? [],
+      snapshot: current?.snapshot ?? '',
       busySince: becameBusy ? Date.now() : row.isBusy ? (current?.busySince ?? Date.now()) : 0,
     })
   }
   for (const id of [...sessions.keys()]) if (!seen.has(id)) sessions.delete(id)
+  const refocused = payload.focusedId !== focusedId
   focusedId = payload.focusedId
   renderRoster()
   renderClaudeChip()
-  renderFeed()
+  if (refocused) {
+    renderFeed()
+    briefAgent(true)
+  }
+}
+
+/** Hands the agent the roster and the focused session's activity (and its snapshot, on a change of focus). */
+function briefAgent(withSnapshot: boolean): void {
+  if (!call.isLive) return
+  call.context(rosterUpdate(), 'wolfbud_roster')
+  const row = focused()
+  if (!row) return
+  call.context(activityUpdate(row.events, row.isBusy), 'claude_activity')
+  if (withSnapshot && row.snapshot !== '') call.context(row.snapshot, 'session_snapshot')
 }
 
 function renderRoster(): void {
@@ -133,28 +136,27 @@ function renderRoster(): void {
   )
 }
 
-const launch = readLaunch()
-if (launch.key === '') {
+const key = readKey()
+if (key === '') {
   showOverlay('Open WolfBud from Claude Code: type /wolfbud in a session that loads the wolfbud mod.')
   throw new Error('no window key in the URL')
 }
 
-const bridge = new Bridge(launch.key, {
-  hello(hello) {
-    applyRoster({ focusedId: hello.focusedId, rows: hello.rows })
-    const row = focused()
-    if (row) {
-      row.events = hello.recent.slice(-RECENT_LIMIT)
-      row.snapshot = hello.snapshot
+const bridge = new Bridge(key, {
+  hello(hello: Hello) {
+    sessions.clear()
+    applyRoster(hello)
+    for (const row of hello.rows) {
+      const tracked = sessions.get(row.id)
+      if (tracked) {
+        tracked.events = row.recent
+        tracked.snapshot = row.snapshot
+      }
     }
     renderFeed()
-    renderClaudeChip()
   },
   roster(payload) {
     applyRoster(payload)
-  },
-  focus(next) {
-    adoptFocus(next)
   },
   claude(message) {
     ingest(message)
@@ -204,9 +206,7 @@ const call = new WolfCall({
     return `Session ${row.name} (${row.project}).\n${activityAnswer(focus, row.events, row.isBusy, row.snapshot)}`
   },
   connected() {
-    const row = focused()
-    call.context(rosterUpdate(), 'wolfbud_roster')
-    if (row) call.context(activityUpdate(row.events, row.isBusy), 'claude_activity')
+    briefAgent(false)
     bridge.requestSnapshot()
   },
   view: {
@@ -247,51 +247,13 @@ const call = new WolfCall({
   },
 })
 
-function adoptFocus(next: FocusPayload): void {
-  focusedId = next.id
-  if (next.id !== null) {
-    const row = sessions.get(next.id) ?? {
-      id: next.id,
-      name: next.name ?? next.id,
-      project: next.project,
-      cwd: '',
-      isBusy: next.isBusy,
-      badge: 0,
-      events: [],
-      snapshot: '',
-      busySince: 0,
-    }
-    row.name = next.name ?? row.name
-    row.project = next.project
-    row.isBusy = next.isBusy
-    row.badge = 0
-    row.events = next.recent.slice(-RECENT_LIMIT)
-    row.snapshot = next.snapshot
-    sessions.set(next.id, row)
-  }
-  renderRoster()
-  renderFeed()
-  renderClaudeChip()
-  if (call.isLive) {
-    call.context(rosterUpdate(), 'wolfbud_roster')
-    const row = focused()
-    if (row) call.context(activityUpdate(row.events, row.isBusy), 'claude_activity')
-    if (next.snapshot !== '') call.context(next.snapshot, 'session_snapshot')
-  }
-}
-
+/** One event from any subscribed session. The hub's roster carries the busy state; this keeps the event ring. */
 function ingest(message: SessionEvent): void {
   const row = sessions.get(message.sessionId)
   if (!row) return
-  if (message.event.kind === 'turn-start' && !row.isBusy) row.busySince = Date.now()
-  if (message.event.kind === 'turn-start') row.isBusy = true
-  if (message.event.kind === 'turn-complete') row.isBusy = false
   row.events.push(message.event)
   row.events.splice(0, Math.max(0, row.events.length - RECENT_LIMIT))
-  if (row.id === focusedId) {
-    renderFeed()
-    renderClaudeChip()
-  }
+  if (row.id === focusedId) renderFeed()
   tellAgent(row, message.event)
 }
 
@@ -415,7 +377,3 @@ void createWolf($('wolf'), './wolf-head.glb', badgeSize - 16).then(created => {
 })
 
 bridge.connect()
-if (launch.wantsCall) {
-  history.replaceState(null, '', `#k=${encodeURIComponent(launch.key)}`)
-  void call.start()
-}

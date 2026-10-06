@@ -3,31 +3,37 @@ import type { Engine, MockClock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { fitTail, formatSnapshot, tailText, wrappedRows } from '../hooks/activity'
+import type { HubCall, HubCommand, HubLine } from '../hooks/events'
 
 const FROM_COMPOSER = {
   origin: { kind: 'composer' as const },
   presentation: { isFullscreen: true, columns: 160 },
 }
 
-const HUB_FILE = JSON.stringify({ port: 4747, pid: 9, token: 'service-token', windowKey: 'window-key' })
+const HUB_FILE = JSON.stringify({ port: 4747, token: 'service-token', windowKey: 'window-key' })
+const IDLE: HubCall = { status: 'idle', mode: null, error: null }
 
 type Post = { path: string; method: string; body: Record<string, unknown>; key: string }
 
+/** A hub answer as `$.http.fetch` hands it over. */
+const json = (body: object, status = 200) => ({ value: { status, ok: status < 400, headers: {}, text: JSON.stringify(body) } })
+
 /**
  * Stands in for the hub beneath the plugin. Health is up unless `healthFails`
- * throws that many times first. Commands and notices wait for the poll, which
- * runs when the test advances the clock.
+ * throws that many times first. Commands and lines wait for the poll, which
+ * runs when the test advances the clock; `call` rides on every pull.
  */
 function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   const posts: Post[] = []
   const runs: string[][] = []
   const submitted: string[] = []
   const appended: string[] = []
-  const commands: object[] = []
-  const notices: object[] = []
+  const commands: HubCommand[] = []
+  const lines: HubLine[] = []
   const waiting: Array<{ check: () => boolean; done: () => void }> = []
   let failsLeft = healthFails
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
+  const state = { call: IDLE }
 
   const notify = () => {
     for (const one of [...waiting]) {
@@ -43,54 +49,25 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   on('http.fetch', (_$, e) => {
     const url = new URL(e.url)
     const body = JSON.parse(e.init?.body ?? '{}') as Record<string, unknown>
-    const key = e.init?.headers?.['x-wolfbud-key'] ?? ''
+    const key = e.init?.headers?.['x-wolfbud-key'] ?? e.init?.headers?.['x-wolfbud-session'] ?? ''
     posts.push({ path: url.pathname, method: e.init?.method ?? 'GET', body, key })
     notify()
-    if (url.pathname === '/api/health') {
-      if (failsLeft > 0) {
-        failsLeft -= 1
-        return { value: { status: 503, ok: false, headers: {}, text: '{}' } }
-      }
-      return {
-        value: {
-          status: 200,
-          ok: true,
-          headers: {},
-          text: JSON.stringify({ ok: true, hasApiKey: true, isWindowBuilt: true, windows: 0 }),
-        },
-      }
+    switch (url.pathname) {
+      case '/api/health':
+        if (failsLeft > 0) {
+          failsLeft -= 1
+          return json({}, 503)
+        }
+        return json({ ok: true, hasApiKey: true, isWindowBuilt: true, windows: 0 })
+      case '/api/subscribe':
+        return json({ token: 'sess-token', name: 'shop', hasApiKey: true, isWindowBuilt: true, windows: 0 })
+      case '/api/session/window':
+        return json({ ok: true, connected: false })
+      case '/api/session/commands':
+        return json({ commands: commands.splice(0), lines: lines.splice(0), call: state.call, isWindowOpen: true })
+      default:
+        return json({ ok: true, delivered: true })
     }
-    if (url.pathname === '/api/window') {
-      return {
-        value: {
-          status: 200,
-          ok: true,
-          headers: {},
-          text: JSON.stringify({ ok: true, connected: false, opened: true, name: 'shop' }),
-        },
-      }
-    }
-    if (url.pathname === '/api/subscribe') {
-      return {
-        value: {
-          status: 200,
-          ok: true,
-          headers: {},
-          text: JSON.stringify({ token: 'sess-token', name: 'shop', windowOpen: false, hasApiKey: true, isWindowBuilt: true }),
-        },
-      }
-    }
-    if (url.pathname.endsWith('/commands')) {
-      return {
-        value: {
-          status: 200,
-          ok: true,
-          headers: {},
-          text: JSON.stringify({ commands: commands.splice(0), notices: notices.splice(0) }),
-        },
-      }
-    }
-    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ok: true, delivered: true, connected: true, name: 'shop' }) } }
   })
   on('process.run', (_$, e) => {
     runs.push([...e.argv])
@@ -115,18 +92,25 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   })
 
   const postsTo = (path: string) => posts.filter(post => post.path === path || post.path.endsWith(path))
+  /** Events reach the hub once the hook that saw them has returned: after the clock settles. */
+  const reported = async () => {
+    await clock.settle()
+    return postsTo('/events').flatMap(post => (post.body.events as Array<Record<string, unknown>> | undefined) ?? [])
+  }
 
-  return { posts, runs, submitted, appended, commands, notices, until, postsTo, clock }
+  return { posts, runs, submitted, appended, commands, lines, state, until, postsTo, reported, clock }
 }
 
+type Hub = ReturnType<typeof fakeHub>
+
 /** /wolfbud against a hub that is already up. The poll is armed and not yet run. */
-async function startWolfbud($: Engine, hub: ReturnType<typeof fakeHub>) {
+async function startWolfbud($: Engine, hub: Hub) {
   const answer = await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
-  await hub.until(() => hub.postsTo('/api/subscribe').length === 1 && hub.postsTo('/api/window').length === 1)
+  await hub.until(() => hub.postsTo('/api/subscribe').length === 1 && hub.postsTo('/api/session/window').length === 1)
   return answer
 }
 
-async function pull(hub: ReturnType<typeof fakeHub>, clock: MockClock) {
+async function pull(hub: Hub, clock: MockClock) {
   await clock.advance(1)
 }
 
@@ -141,15 +125,11 @@ describe('the hub', () => {
     expect(hub.runs).toEqual([])
     const subscribed = hub.postsTo('/api/subscribe')[0]
     expect(subscribed?.key).toBe('service-token')
-    expect(subscribed?.body).toMatchObject({
-      project: 'shop',
-      cwd: '/repo/shop',
-      capabilities: ['submit', 'steer', 'abort', 'snapshot'],
-    })
+    expect(subscribed?.body).toMatchObject({ project: 'shop', apiKey: 'el-test' })
     expect(typeof subscribed?.body.sessionId).toBe('string')
-    const shown = hub.postsTo('/api/window')[0]
-    expect(shown?.body).toMatchObject({ sessionId: subscribed?.body.sessionId, call: false })
-    expect(shown?.key).toBe('service-token')
+    const shown = hub.postsTo('/api/session/window')[0]
+    expect(shown?.body).toEqual({ call: false })
+    expect(shown?.key).toBe('sess-token')
     expect(hub.posts.some(post => post.key === 'window-key')).toBe(false)
   })
 
@@ -167,6 +147,19 @@ describe('the hub', () => {
     expect(hub.runs.some(argv => argv.includes('open') || argv[0] === 'orca' || argv[0] === 'terminal-browser')).toBe(false)
   })
 
+  test('a second /wolfbud only raises the window; it does not subscribe again', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+
+    const answer = await $.command.run({ command: 'wolfbud', args: 'window', ...FROM_COMPOSER })
+
+    expect(answer.text).toBe('Opening WolfBud.')
+    expect(hub.postsTo('/api/subscribe')).toHaveLength(1)
+    expect(hub.postsTo('/api/health')).toHaveLength(1)
+    expect(hub.postsTo('/api/session/window')).toHaveLength(2)
+  })
+
   test('/wolfbud call focuses this subscription and asks to start the one call', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const hub = fakeHub(on)
@@ -174,7 +167,7 @@ describe('the hub', () => {
     const answer = await $.command.run({ command: 'wolfbud', args: 'call', ...FROM_COMPOSER })
 
     expect(answer.text).toBe('Calling WolfBud, focused on shop.')
-    expect(hub.postsTo('/api/window').at(-1)?.body).toMatchObject({ call: true })
+    expect(hub.postsTo('/api/session/window').at(-1)?.body).toEqual({ call: true })
   })
 
   test('/wolfbud end hangs up the call and does not unsubscribe', async ($, on) => {
@@ -185,7 +178,7 @@ describe('the hub', () => {
     const answer = await $.command.run({ command: 'wolfbud', args: 'end', ...FROM_COMPOSER })
 
     expect(answer.text).toBe('Ending the call.')
-    expect(hub.postsTo('/api/call/end')).toHaveLength(1)
+    expect(hub.postsTo('/api/session/call/end')).toHaveLength(1)
     expect(hub.postsTo('/bye')).toHaveLength(0)
   })
 
@@ -198,7 +191,7 @@ describe('the hub', () => {
 
     expect(answer.text).toBe('This session left WolfBud. Other sessions keep the window.')
     expect(hub.postsTo('/bye')).toHaveLength(1)
-    expect(hub.postsTo('/api/call/end')).toHaveLength(0)
+    expect(hub.postsTo('/api/session/call/end')).toHaveLength(0)
   })
 
   test('the session ending unsubscribes and leaves the call up', async ($, on) => {
@@ -209,17 +202,21 @@ describe('the hub', () => {
     await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sess', resume: { id: 'sess' } })
 
     expect(hub.postsTo('/bye')).toHaveLength(1)
-    expect(hub.postsTo('/api/call/end')).toHaveLength(0)
+    expect(hub.postsTo('/api/session/call/end')).toHaveLength(0)
   })
 
-  test('the api_key option is handed to the launcher when it has to start the hub', { options: { api_key: 'from-option' } }, async ($, on) => {
-    mock.env(on, { ELEVENLABS_API_KEY: 'from-env', HOME: '/Users/test' })
-    const hub = fakeHub(on, { healthFails: 1 })
+  test(
+    'the api_key option travels with the subscription, ahead of the environment',
+    { options: { api_key: 'from-option' } },
+    async ($, on) => {
+      mock.env(on, { ELEVENLABS_API_KEY: 'from-env', HOME: '/Users/test' })
+      const hub = fakeHub(on)
 
-    await startWolfbud($, hub)
+      await startWolfbud($, hub)
 
-    expect(hub.runs[0]?.[1]).toMatch(/launch\.mjs$/)
-  })
+      expect(hub.postsTo('/api/subscribe')[0]?.body).toMatchObject({ apiKey: 'from-option' })
+    },
+  )
 })
 
 describe('prompts from the agent', () => {
@@ -243,8 +240,7 @@ describe('prompts from the agent', () => {
     expect(hub.submitted[0]).toContain('WolfBud')
     expect(hub.appended).toHaveLength(0)
     expect(hub.postsTo('/ack')[0]?.body).toEqual({ id: 'cmd_1', ok: true, message: 'Sent: Claude is starting on it now.' })
-    const ack = hub.postsTo('/ack')[0]
-    expect(ack?.key).not.toBe('service-token')
+    expect(hub.postsTo('/ack')[0]?.key).toBe('sess-token')
   })
 
   // The kit has no store beneath session.append (a hook there can't answer
@@ -270,7 +266,13 @@ describe('prompts from the agent', () => {
     const hub = fakeHub(on)
     await startWolfbud($, hub)
     await $.turn.start({ text: 'build the checkout form', turnId: 'turn-1' })
-    hub.commands.push({ id: 'cmd_3', type: 'send', prompt: 'Afterwards, update the README.', when: 'after_current', summary: 'Update README' })
+    hub.commands.push({
+      id: 'cmd_3',
+      type: 'send',
+      prompt: 'Afterwards, update the README.',
+      when: 'after_current',
+      summary: 'Update README',
+    })
 
     await pull(hub, hub.clock)
     await hub.until(() => hub.postsTo('/ack').length === 1)
@@ -298,10 +300,11 @@ describe('prompts from the agent', () => {
     hub.commands.push({ id: 'cmd_5', type: 'snapshot' })
 
     await pull(hub, hub.clock)
-    await hub.until(() => hub.postsTo('/ack').length === 1)
+    await hub.until(() => hub.postsTo('/events').some(post => typeof post.body.snapshot === 'string'))
 
     const events = hub.postsTo('/events').at(-1)?.body
     expect(events).toMatchObject({ snapshot: expect.stringContaining('[session snapshot] Session shop.') })
+    expect(hub.postsTo('/ack')).toHaveLength(0)
   })
 })
 
@@ -318,8 +321,7 @@ describe('activity reports', () => {
 
     await $.tool.call({ tool: 'Bash', command: 'pnpm test', description: 'Run the tests' })
 
-    const events = hub.postsTo('/events').flatMap(post => (post.body.events as unknown[] | undefined) ?? [])
-    expect(events).toContainEqual(
+    expect(await hub.reported()).toContainEqual(
       expect.objectContaining({
         kind: 'tool',
         tool: 'Bash',
@@ -330,7 +332,7 @@ describe('activity reports', () => {
     )
   })
 
-  test('turns report busy, then the answer', async ($, on) => {
+  test('turns report busy, then the answer, in one post per burst', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const hub = fakeHub(on)
     await startWolfbud($, hub)
@@ -338,8 +340,10 @@ describe('activity reports', () => {
     await $.turn.start({ text: 'fix the cart', turnId: 'turn-9' })
     await $.turn.complete({ answer: 'Fixed the rounding bug.', durationMs: 4200, isAborted: false, turnId: 'turn-9', reason: 'answer' })
 
-    const kinds = hub.postsTo('/events').flatMap(post => ((post.body.events as Array<{ kind: string }> | undefined) ?? []).map(event => event.kind))
-    expect(kinds).toEqual(['turn-start', 'turn-complete'])
+    const events = await hub.reported()
+    expect(events.map(event => event.kind)).toEqual(['turn-start', 'turn-complete'])
+    expect(hub.postsTo('/events')).toHaveLength(1)
+    expect(hub.postsTo('/events')[0]?.body).not.toHaveProperty('isClaudeBusy')
   })
 
   test('nothing is posted before the session is subscribed', async ($, on) => {
@@ -348,6 +352,7 @@ describe('activity reports', () => {
     on('tool.call', { tool: 'Read' }, () => ({ result: 'contents', text: 'contents' }))
 
     await $.tool.call({ tool: 'Read', file_path: '/repo/src/app.ts' })
+    await hub.clock.settle()
 
     expect(hub.posts).toHaveLength(0)
   })
@@ -379,42 +384,60 @@ describe('the pane', () => {
       mock.env(on, { HOME: '/Users/test' })
       const hub = fakeHub(on)
       await startWolfbud($, hub)
-      hub.notices.push({ t: 'status', call: 'live', mode: 'listening' })
-      hub.notices.push({ t: 'line', role: 'user', text: 'can we rename that button?' })
-      hub.commands.push({ id: 'cmd_1', type: 'send', prompt: 'Rename Submit to Save.', when: 'after_current', summary: 'Rename Submit to Save' })
+      hub.state.call = { status: 'live', mode: 'listening', error: null }
+      hub.lines.push({ role: 'user', text: 'can we rename that button?' })
+      hub.commands.push({
+        id: 'cmd_1',
+        type: 'send',
+        prompt: 'Rename Submit to Save.',
+        when: 'after_current',
+        summary: 'Rename Submit to Save',
+      })
       await pull(hub, hub.clock)
       await hub.until(() => hub.postsTo('/ack').length === 1)
 
       const ui = await $.ui.mount({ plugin: 'wolfbud', surface, component: 'Pane', requestId: 'wolfbud', props: PANE_PROPS })
       const drawn = JSON.stringify(await ui.drawn())
       expect(drawn).toContain('● on a call · listening')
+      expect(drawn).toContain('Call started')
       expect(drawn).toContain('can we rename that button?')
       expect(drawn).toContain('Rename Submit to Save')
       expect(drawn).toContain('→ claude')
       expect(drawn).toContain('shop ·')
 
       await ui.press({ key: 'end' })
-      expect(hub.postsTo('/api/call/end').length).toBeGreaterThan(0)
+      expect(hub.postsTo('/api/session/call/end').length).toBeGreaterThan(0)
       await ui.unmount()
     })
   }
+
+  test('a call state that has not changed adds no line on the next pull', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    hub.state.call = { status: 'live', mode: 'listening', error: null }
+    await pull(hub, hub.clock)
+    await pull(hub, hub.clock)
+    await pull(hub, hub.clock)
+
+    const ui = await $.ui.mount({ plugin: 'wolfbud', surface: 'terminal', component: 'Pane', requestId: 'wolfbud', props: PANE_PROPS })
+    const drawn = JSON.stringify(await ui.drawn())
+    expect(drawn.split('Call started')).toHaveLength(2)
+    await ui.unmount()
+  })
 
   test('a long call keeps the newest lines and the buttons in view (terminal)', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const hub = fakeHub(on)
     await startWolfbud($, hub)
-    hub.notices.push({ t: 'status', call: 'live', mode: 'listening' })
+    hub.state.call = { status: 'live', mode: 'listening', error: null }
     for (let i = 1; i <= 12; i += 1) {
-      hub.notices.push({
-        t: 'line',
+      hub.lines.push({
         role: i % 2 === 1 ? 'user' : 'agent',
         text: `line ${i}: a sentence long enough to wrap onto a second row of the pane`,
       })
     }
     await pull(hub, hub.clock)
-    await hub.until(() => hub.postsTo('/events').length >= 1 || hub.notices.length === 0)
-
-    // The poll consumes notices. Wait until state has the last line by mounting after the clock settles.
     await hub.clock.settle()
 
     const props = { ...PANE_PROPS, bodyColumns: 48, scroll: { offset: 0, bodyRows: 12 } }

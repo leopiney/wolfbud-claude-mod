@@ -12,10 +12,12 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
 import type { WolfbudCall, WolfbudHub, WolfbudLine } from '../types'
 import { clip, describeTool, errorGist, fitTail, formatSnapshot, projectName, toolLabel, wrappedRows } from './activity'
-import type { ClaudeEvent, HubCommand, HubNotice } from './events'
+import type { ClaudeEvent, HubCall, HubCommand, PullResponse } from './events'
 
 const PANE = 'wolfbud'
+// Fixed origin: the mic grant is per origin, so the port does not walk.
 const PORT = 4747
+const ORIGIN = `http://127.0.0.1:${PORT}`
 const MAX_LINES = 80
 // The pane's rows besides the transcript: the call line, Claude's line, the two
 // margins and the buttons. A transcript line's text starts after its 8-cell
@@ -24,21 +26,21 @@ const PANE_CHROME_ROWS = 5
 const LINE_INDENT = 9
 const USAGE = 'Usage: /wolfbud [call | end | window | stop | status]'
 const LEAD = 'The user asked WolfBud, the voice assistant on a call beside this session, to pass this on:'
-const CAPABILITIES = ['submit', 'steer', 'abort', 'snapshot']
+const HUB_DOWN = 'WolfBud hub is down. This session keeps working.'
+const NO_WINDOW = 'No WolfBud window is open.'
 
 type Settings = { apiKey: string }
 type SendCommand = Extract<HubCommand, { type: 'send' }>
 type StopCommand = Extract<HubCommand, { type: 'stop' }>
+type HubResponse = { ok: boolean; status: number; text: string }
 
 const IDLE_CALL: WolfbudCall = { status: 'idle', mode: null, error: null }
 const IDLE_HUB: WolfbudHub = {
   status: 'off',
-  port: PORT,
   error: null,
   hasApiKey: false,
   isWindowBuilt: false,
   isWindowOpen: false,
-  isWanted: false,
   sessionId: '',
   sessionToken: '',
   serviceToken: '',
@@ -54,6 +56,9 @@ const claude = atom({ plugin: 'wolfbud', key: 'claude' } as const, { isBusy: fal
 let settings: Settings = { apiKey: '' }
 let pollTimer: { cancel: () => void } | null = null
 let pollGen = 0
+// Events wait here for one POST once the hook that saw them has returned.
+let eventBuffer: ClaudeEvent[] = []
+let flushTimer: { cancel: () => void } | null = null
 
 function readSettings(options: PluginOptions): Settings {
   return { apiKey: typeof options.api_key === 'string' ? options.api_key.trim() : '' }
@@ -67,82 +72,74 @@ async function addLine($: EngineInterface, role: WolfbudLine['role'], text: stri
   await update($, lines, list => [...list, { id: (list.at(-1)?.id ?? 0) + 1, role, text }].slice(-MAX_LINES))
 }
 
-function headers(current: WolfbudHub, extra?: Record<string, string>): Record<string, string> {
-  return {
-    ...(extra ?? {}),
-    ...(current.serviceToken !== '' ? { 'x-wolfbud-key': current.serviceToken } : {}),
-    ...(current.sessionToken !== '' ? { 'x-wolfbud-session': current.sessionToken } : {}),
-  }
+/**
+ * One request to the hub. The session token goes along once there is one;
+ * `/api/subscribe` alone takes the service token instead. Rejects on a
+ * network error, like `$.http.fetch`.
+ */
+async function hubFetch(
+  $: EngineInterface,
+  path: string,
+  init: { method?: 'GET' | 'POST'; body?: unknown; serviceToken?: string } = {},
+): Promise<HubResponse> {
+  const current = await read($, hub)
+  const headers: Record<string, string> = {}
+  if (init.body !== undefined) headers['content-type'] = 'application/json'
+  if (init.serviceToken !== undefined) headers['x-wolfbud-key'] = init.serviceToken
+  else if (current.sessionToken !== '') headers['x-wolfbud-session'] = current.sessionToken
+  const res = await $.http.fetch(`${ORIGIN}${path}`, {
+    method: init.method ?? (init.body === undefined ? 'GET' : 'POST'),
+    headers,
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+  })
+  return { ok: res.ok, status: res.status, text: res.text }
 }
 
-async function readHubFile($: EngineInterface): Promise<{ port: number; token: string } | null> {
+async function readServiceToken($: EngineInterface): Promise<string | null> {
   const home = (await $.env.get('HOME')) ?? ''
   if (home === '') return null
   try {
-    const text = await $.fs.read(`${home}/.wolfbud/hub.json`)
-    const parsed = JSON.parse(text) as Record<string, unknown>
-    const token = parsed.token
-    const filePort = Number(parsed.port)
-    if (typeof token !== 'string' || token === '' || !Number.isInteger(filePort)) return null
-    return { port: filePort, token }
+    const parsed = JSON.parse(await $.fs.read(`${home}/.wolfbud/hub.json`)) as { token?: unknown }
+    return typeof parsed.token === 'string' && parsed.token !== '' ? parsed.token : null
   } catch {
     return null
   }
 }
 
-async function health($: EngineInterface, target: number): Promise<{ hasApiKey: boolean; isWindowBuilt: boolean; windows: number } | null> {
+async function isHubUp($: EngineInterface): Promise<boolean> {
   try {
-    const res = await $.http.fetch(`http://127.0.0.1:${target}/api/health`)
-    if (!res.ok) return null
-    const body = JSON.parse(res.text) as { hasApiKey?: boolean; isWindowBuilt?: boolean; windows?: number }
-    return { hasApiKey: Boolean(body.hasApiKey), isWindowBuilt: Boolean(body.isWindowBuilt), windows: Number(body.windows ?? 0) }
+    return (await $.http.fetch(`${ORIGIN}/api/health`)).ok
   } catch {
-    return null
+    return false
   }
 }
 
 async function markDown($: EngineInterface): Promise<void> {
-  await patchHub($, {
-    status: 'down',
-    error: 'WolfBud hub is down. This session keeps working. /wolfbud tries again.',
-    isWanted: true,
-  })
+  await patchHub($, { status: 'down', error: `${HUB_DOWN} /wolfbud tries again.` })
 }
 
-/** Starts the hub if nothing is answering, then reads the token the launcher wrote. */
+/** Starts the hub if nothing is answering, then reads the token the hub wrote. */
 async function ensureHub($: EngineInterface): Promise<boolean> {
-  // The origin is fixed. A stale hub.json from a bridge that walked ports must not send us elsewhere.
-  let up = await health($, PORT)
-  if (up === null) {
+  if (!(await isHubUp($))) {
     const node = (await $.env.get('WOLFBUD_NODE')) || 'node'
-    const apiKey = settings.apiKey || (await $.env.get('ELEVENLABS_API_KEY')) || ''
-    const agentId = (await $.env.get('WOLFBUD_AGENT_ID')) || ''
-    const env: Record<string, string> = {}
-    if (apiKey !== '') env.ELEVENLABS_API_KEY = apiKey
-    if (agentId !== '') env.WOLFBUD_AGENT_ID = agentId
-    const ran = await $.process.run([node, `${$.plugin.root}/bridge/launch.mjs`], { env, timeoutMs: 20_000 }).catch(() => null)
-    if (ran === null || ran.exitCode !== 0) {
+    const ran = await $.process.run([node, `${$.plugin.root}/bridge/launch.mjs`], { timeoutMs: 20_000 }).catch(() => null)
+    if (ran === null || ran.exitCode !== 0 || !(await isHubUp($))) {
       await markDown($)
       return false
     }
-    up = await health($, PORT)
   }
-  const file = await readHubFile($)
-  if (up === null || file === null) {
+  const token = await readServiceToken($)
+  if (token === null) {
     await markDown($)
     return false
   }
-  await patchHub($, {
-    status: 'ready',
-    port: file.port,
-    serviceToken: file.token,
-    hasApiKey: up.hasApiKey,
-    isWindowBuilt: up.isWindowBuilt,
-    isWindowOpen: up.windows > 0,
-    error: null,
-    isWanted: true,
-  })
+  await patchHub($, { serviceToken: token })
   return true
+}
+
+/** Hub up and this session subscribed to it, from whatever state we are in. */
+async function connect($: EngineInterface): Promise<boolean> {
+  return (await ensureHub($)) && subscribe($)
 }
 
 function stopPoll(): void {
@@ -158,32 +155,40 @@ function armPoll($: EngineInterface, gen: number, ms: number): void {
   })
 }
 
+function startPoll($: EngineInterface): void {
+  pollGen += 1
+  armPoll($, pollGen, 0)
+}
+
+/**
+ * One pull of this session's inbox. The hub holds an empty request until
+ * something is queued, so the loop mostly paces itself; the short gap after an
+ * answer keeps a hub that answers at once from being hammered.
+ */
 async function poll($: EngineInterface, gen: number): Promise<void> {
   if (gen !== pollGen) return
   const current = await read($, hub)
-  if (!current.isWanted || current.sessionToken === '') return
+  if (current.status === 'off') return
   if (current.status !== 'ready') {
-    if (await ensureHub($)) await subscribe($)
-    else armPoll($, gen, 2000)
+    if (!(await connect($))) armPoll($, gen, 2000)
     return
   }
   let delay = 250
   try {
-    const res = await $.http.fetch(`http://127.0.0.1:${current.port}/api/sessions/${current.sessionId}/commands`, {
-      headers: { 'x-wolfbud-session': current.sessionToken },
-    })
+    const res = await hubFetch($, '/api/session/commands')
     if (gen !== pollGen) return
-    if (res.status === 401 || res.status === 404) {
-      // subscribe() starts a fresh poll. Arming this generation too would double-pull.
+    if (res.status === 401) {
+      // The hub forgot us (it restarted). subscribe() starts a fresh poll.
       await subscribe($)
       return
     }
     if (!res.ok) {
       delay = 2000
     } else {
-      const body = JSON.parse(res.text) as { commands?: HubCommand[]; notices?: HubNotice[] }
-      for (const notice of body.notices ?? []) await onNotice($, notice)
-      for (const command of body.commands ?? []) await onCommand($, command)
+      const body = JSON.parse(res.text) as PullResponse
+      await applyCall($, body.call, body.isWindowOpen)
+      for (const line of body.lines) await addLine($, line.role, line.text)
+      for (const command of body.commands) await onCommand($, command)
     }
   } catch {
     if (gen !== pollGen) return
@@ -191,38 +196,21 @@ async function poll($: EngineInterface, gen: number): Promise<void> {
     delay = 2000
   }
   if (gen !== pollGen) return
-  const still = await read($, hub)
-  if (!still.isWanted || still.sessionToken === '') return
   armPoll($, gen, delay)
-}
-
-function startPoll($: EngineInterface): void {
-  pollGen += 1
-  armPoll($, pollGen, 0)
 }
 
 async function subscribe($: EngineInterface): Promise<boolean> {
   const current = await read($, hub)
   const sessionId = current.sessionId !== '' ? current.sessionId : crypto.randomUUID()
-  const cwd = await $.session.cwd()
-  const { isBusy } = await read($, claude)
+  const [cwd, { isBusy }, envKey] = await Promise.all([$.session.cwd(), read($, claude), $.env.get('ELEVENLABS_API_KEY')])
   try {
-    const res = await $.http.fetch(`http://127.0.0.1:${current.port}/api/subscribe`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-wolfbud-key': current.serviceToken },
-      body: JSON.stringify({
-        sessionId,
-        project: projectName(cwd),
-        cwd,
-        capabilities: CAPABILITIES,
-        isBusy,
-      }),
+    const res = await hubFetch($, '/api/subscribe', {
+      serviceToken: current.serviceToken,
+      body: { sessionId, project: projectName(cwd), isBusy, apiKey: settings.apiKey || envKey || '' },
     })
-    if (!res.ok) {
-      await markDown($)
-      return false
-    }
-    const body = JSON.parse(res.text) as { token?: string; name?: string; windowOpen?: boolean; hasApiKey?: boolean; isWindowBuilt?: boolean }
+    const body = res.ok
+      ? (JSON.parse(res.text) as { token?: string; name?: string; hasApiKey?: boolean; isWindowBuilt?: boolean; windows?: number })
+      : {}
     if (typeof body.token !== 'string' || body.token === '') {
       await markDown($)
       return false
@@ -232,11 +220,10 @@ async function subscribe($: EngineInterface): Promise<boolean> {
       sessionId,
       sessionToken: body.token,
       name: typeof body.name === 'string' ? body.name : projectName(cwd),
-      isWindowOpen: Boolean(body.windowOpen),
       hasApiKey: Boolean(body.hasApiKey),
       isWindowBuilt: Boolean(body.isWindowBuilt),
+      isWindowOpen: Number(body.windows ?? 0) > 0,
       error: null,
-      isWanted: true,
     })
     startPoll($)
     return true
@@ -246,112 +233,94 @@ async function subscribe($: EngineInterface): Promise<boolean> {
   }
 }
 
-async function postEvents($: EngineInterface, body: unknown): Promise<boolean> {
-  const current = await read($, hub)
-  if (current.status !== 'ready' || current.sessionToken === '') return false
+async function postEvents($: EngineInterface, body: { events?: ClaudeEvent[]; snapshot?: string }): Promise<void> {
+  if ((await read($, hub)).status !== 'ready') return
   try {
-    const res = await $.http.fetch(`http://127.0.0.1:${current.port}/api/sessions/${current.sessionId}/events`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers(current) },
-      body: JSON.stringify(body),
-    })
-    return res.ok
+    await hubFetch($, '/api/session/events', { body })
   } catch {
-    return false
+    // The next poll notices a hub that is gone.
   }
 }
 
-async function report($: EngineInterface, event: ClaudeEvent): Promise<void> {
-  const { isBusy } = await read($, claude)
-  await postEvents($, { events: [event], isClaudeBusy: isBusy })
+async function flushEvents($: EngineInterface): Promise<void> {
+  flushTimer = null
+  const events = eventBuffer
+  eventBuffer = []
+  if (events.length > 0) await postEvents($, { events })
+}
+
+/** Queues an event for the hub. The POST runs once the hook that saw it has returned, one for a whole burst. */
+function report($: EngineInterface, event: ClaudeEvent): void {
+  eventBuffer.push(event)
+  flushTimer ??= $.clock.after(0, () => {
+    void flushEvents($)
+  })
 }
 
 async function ack($: EngineInterface, id: string, ok: boolean, message: string): Promise<void> {
-  const current = await read($, hub)
-  if (current.sessionToken === '') return
   try {
-    await $.http.fetch(`http://127.0.0.1:${current.port}/api/sessions/${current.sessionId}/ack`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-wolfbud-session': current.sessionToken },
-      body: JSON.stringify({ id, ok, message }),
-    })
+    await hubFetch($, '/api/session/ack', { body: { id, ok, message } })
   } catch {
     // The voice tool times out on its own; the pane already has the line.
   }
 }
 
-async function showWindow($: EngineInterface, withCall: boolean): Promise<string> {
-  if (!(await ensureHub($))) return 'WolfBud hub is down. This session keeps working.'
-  if (!(await subscribe($))) return 'WolfBud hub is down. This session keeps working.'
+async function showWindow($: EngineInterface, withCall: boolean, isRetry = false): Promise<string> {
   const current = await read($, hub)
+  if (current.status !== 'ready' && !(await connect($))) return HUB_DOWN
   try {
-    const res = await $.http.fetch(`http://127.0.0.1:${current.port}/api/window`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers(current) },
-      body: JSON.stringify({ sessionId: current.sessionId, call: withCall }),
-    })
+    const res = await hubFetch($, '/api/session/window', { body: { call: withCall } })
+    // The hub forgot us (it restarted): subscribe again, once.
+    if (res.status === 401 && !isRetry) return (await connect($)) ? showWindow($, withCall, true) : HUB_DOWN
     if (!res.ok) return 'WolfBud could not open the window.'
-    const body = JSON.parse(res.text) as { connected?: boolean; opened?: boolean; name?: string }
+    const body = JSON.parse(res.text) as { connected?: boolean }
     if (body.connected) await patchHub($, { isWindowOpen: true })
-    const name = body.name || current.name
-    if (withCall) return name !== '' ? `Calling WolfBud, focused on ${name}.` : 'Calling WolfBud.'
-    return body.connected ? `WolfBud is up${name !== '' ? `, focused on ${name}` : ''}.` : 'Opening WolfBud.'
+    const name = (await read($, hub)).name
+    const focus = name !== '' ? `, focused on ${name}` : ''
+    if (withCall) return `Calling WolfBud${focus}.`
+    return body.connected ? `WolfBud is up${focus}.` : 'Opening WolfBud.'
   } catch {
-    return 'WolfBud hub is down. This session keeps working.'
+    await markDown($)
+    return HUB_DOWN
   }
 }
 
 async function endCall($: EngineInterface): Promise<string> {
-  const current = await read($, hub)
-  if (current.status !== 'ready' || current.serviceToken === '') return 'No WolfBud window is open.'
+  if ((await read($, hub)).status !== 'ready') return NO_WINDOW
   try {
-    const res = await $.http.fetch(`http://127.0.0.1:${current.port}/api/call/end`, {
-      method: 'POST',
-      headers: { 'x-wolfbud-key': current.serviceToken },
-    })
-    if (!res.ok) return 'No WolfBud window is open.'
-    const body = JSON.parse(res.text) as { delivered?: boolean }
-    return body.delivered ? 'Ending the call.' : 'No WolfBud window is open.'
+    const res = await hubFetch($, '/api/session/call/end', { method: 'POST' })
+    const body = res.ok ? (JSON.parse(res.text) as { delivered?: boolean }) : {}
+    return body.delivered ? 'Ending the call.' : NO_WINDOW
   } catch {
-    return 'WolfBud hub is down. This session keeps working.'
+    return HUB_DOWN
   }
 }
 
 async function unsubscribe($: EngineInterface): Promise<void> {
   stopPoll()
-  const current = await read($, hub)
-  if (current.sessionToken !== '' && current.status === 'ready') {
+  flushTimer?.cancel()
+  flushTimer = null
+  eventBuffer = []
+  if ((await read($, hub)).status === 'ready') {
     try {
-      await $.http.fetch(`http://127.0.0.1:${current.port}/api/sessions/${current.sessionId}/bye`, {
-        method: 'POST',
-        headers: { 'x-wolfbud-session': current.sessionToken },
-      })
+      await hubFetch($, '/api/session/bye', { method: 'POST' })
     } catch {
-      // Leaving locally still stands: the hub drops a quiet row on its own only if we reached it.
+      // Leaving locally still stands.
     }
   }
-  await patchHub($, { ...IDLE_HUB, port: current.port })
+  await update($, hub, () => IDLE_HUB)
   await update($, call, () => IDLE_CALL)
 }
 
-async function onNotice($: EngineInterface, notice: HubNotice): Promise<void> {
-  switch (notice.t) {
-    case 'window':
-      await patchHub($, { isWindowOpen: notice.open })
-      if (!notice.open) await update($, call, () => IDLE_CALL)
-      return
-    case 'status': {
-      const before = await read($, call)
-      await update($, call, () => ({ status: notice.call, mode: notice.mode, error: notice.error ?? null }))
-      if (notice.call === 'live' && before.status !== 'live') await addLine($, 'note', 'Call started')
-      if (notice.call !== 'live' && before.status === 'live') await addLine($, 'note', 'Call ended')
-      if (notice.call === 'error' && notice.error) await addLine($, 'note', notice.error)
-      return
-    }
-    case 'line':
-      await addLine($, notice.role, notice.text)
-      return
-  }
+/** The call as the hub reports it on every pull. A change of state is a note in the transcript. */
+async function applyCall($: EngineInterface, next: HubCall, isWindowOpen: boolean): Promise<void> {
+  const [before, current] = await Promise.all([read($, call), read($, hub)])
+  if (current.isWindowOpen !== isWindowOpen) await patchHub($, { isWindowOpen })
+  if (before.status === next.status && before.mode === next.mode && before.error === next.error) return
+  await update($, call, () => next)
+  if (next.status === 'live' && before.status !== 'live') await addLine($, 'note', 'Call started')
+  if (next.status !== 'live' && before.status === 'live') await addLine($, 'note', 'Call ended')
+  if (next.status === 'error' && next.error && before.error !== next.error) await addLine($, 'note', next.error)
 }
 
 async function onCommand($: EngineInterface, command: HubCommand): Promise<void> {
@@ -363,19 +332,16 @@ async function onCommand($: EngineInterface, command: HubCommand): Promise<void>
       await stopClaude($, command)
       return
     case 'snapshot':
-      await sendSnapshot($, command.id)
+      await sendSnapshot($)
       return
   }
 }
 
-async function sendSnapshot($: EngineInterface, id: string): Promise<void> {
-  const found = await $.session.messages()
+/** The transcript so far, posted back for the agent. No ack: the hub does not wait on it. */
+async function sendSnapshot($: EngineInterface): Promise<void> {
+  const [found, cwd, { isBusy }, { name }] = await Promise.all([$.session.messages(), $.session.cwd(), read($, claude), read($, hub)])
   const messages = Array.isArray(found) ? found : []
-  const cwd = await $.session.cwd()
-  const { isBusy } = await read($, claude)
-  const { name } = await read($, hub)
   await postEvents($, { snapshot: formatSnapshot(messages, { project: projectName(cwd), isBusy, name }) })
-  await ack($, id, true, 'Snapshot sent.')
 }
 
 /** The agent's prompt for Claude: started, steered into the running turn, or queued. */
@@ -433,13 +399,9 @@ async function stopClaude($: EngineInterface, request: StopCommand): Promise<voi
 }
 
 async function statusText($: EngineInterface): Promise<string> {
-  const b = await read($, hub)
-  const c = await read($, call)
+  const [b, c] = await Promise.all([read($, hub), read($, call)])
   const where = b.name !== '' ? `${b.name}, ` : ''
-  const hubLine =
-    b.status === 'ready'
-      ? `hub on http://127.0.0.1:${b.port}`
-      : `hub ${b.status}${b.error ? ` (${b.error})` : ''}`
+  const hubLine = b.status === 'ready' ? `hub on ${ORIGIN}` : `hub ${b.status}${b.error ? ` (${b.error})` : ''}`
   return [
     `WolfBud: ${where}${hubLine}, window ${b.isWindowOpen ? 'open' : 'closed'}, call ${c.status}.`,
     ...problems(b).map(problem => `- ${problem}`),
@@ -448,12 +410,10 @@ async function statusText($: EngineInterface): Promise<string> {
 
 /** What stands between the person and a working call, each with its fix. */
 function problems(b: WolfbudHub): string[] {
-  if (b.status === 'down' || b.status === 'error') {
-    return [b.error ?? 'WolfBud hub is down. This session keeps working. /wolfbud tries again.']
-  }
+  if (b.status === 'down') return [b.error ?? HUB_DOWN]
   if (b.status !== 'ready') return []
   const found: string[] = []
-  if (!b.hasApiKey) found.push('No ElevenLabs API key: set ELEVENLABS_API_KEY (or the api_key option) and restart Claude Code.')
+  if (!b.hasApiKey) found.push('No ElevenLabs API key: set ELEVENLABS_API_KEY (or the api_key option), then run /wolfbud again.')
   if (!b.isWindowBuilt) found.push('The window is not built: run `pnpm window:build` in the wolfbud-claude-mod repo.')
   return found
 }
@@ -488,9 +448,7 @@ export const register: Register = (on, options) => {
       argumentHint: '[call | end | window | stop | status]',
     })
     // A reload dropped the poll. The hub is still up; subscribe the same session again.
-    if (e.isInteractive && (await read($, hub)).isWanted) {
-      if (await ensureHub($)) await subscribe($)
-    }
+    if (e.isInteractive && (await read($, hub)).status !== 'off') await connect($)
     return next(e)
   })
 
@@ -529,14 +487,14 @@ export const register: Register = (on, options) => {
           : null
     if (from !== null && e.text.trim() !== '') {
       const text = from === 'wolfbud' ? e.text.replace(LEAD, '').trim() : e.text
-      await report($, { kind: 'prompt', at: await $.clock.now(), text: clip(text, 1500), from })
+      report($, { kind: 'prompt', at: await $.clock.now(), text: clip(text, 1500), from })
     }
     return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
     await update($, claude, () => ({ isBusy: true, turnId: e.turnId }))
-    await report($, { kind: 'turn-start', at: await $.clock.now() })
+    report($, { kind: 'turn-start', at: await $.clock.now() })
     return next(e)
   })
 
@@ -546,7 +504,7 @@ export const register: Register = (on, options) => {
     const name = String(tool)
     const status = ran.deny !== undefined ? 'denied' : ran.isError === true ? 'error' : 'ok'
     const error = errorGist(ran.deny ?? (ran.isError === true ? ran.text : undefined))
-    await report($, {
+    report($, {
       kind: 'tool',
       at: await $.clock.now(),
       tool: toolLabel(name),
@@ -561,7 +519,7 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       await update($, claude, () => ({ isBusy: false, turnId: null }))
-      await report($, {
+      report($, {
         kind: 'turn-complete',
         at: await $.clock.now(),
         answer: e.answer.slice(0, 4000),
@@ -573,25 +531,20 @@ export const register: Register = (on, options) => {
   })
 
   on('classic.Notification', async ($, e, next) => {
-    await report($, { kind: 'notification', at: await $.clock.now(), message: clip(e.message, 300), type: e.notification_type })
+    report($, { kind: 'notification', at: await $.clock.now(), message: clip(e.message, 300), type: e.notification_type })
     return next(e)
   })
 
   on('session.end', async ($, e, next) => {
     // /clear is a new session. Either way this subscription ends; other Claudes stay.
-    if (e.reason === 'clear') {
-      await update($, claude, () => ({ isBusy: false, turnId: null }))
-    }
+    await update($, claude, () => ({ isBusy: false, turnId: null }))
     await unsubscribe($)
     return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const b = await read($, hub)
-    const c = await read($, call)
-    const list = await read($, lines)
-    const { isBusy } = await read($, claude)
+    const [b, c, list, { isBusy }] = await Promise.all([read($, hub), read($, call), read($, lines), read($, claude)])
     const found = problems(b)
     // The terminal clips a pane's tree from the bottom, so keep the newest lines
     // that fit beside the header and buttons, and drop the oldest off the top.
@@ -613,7 +566,9 @@ export const register: Register = (on, options) => {
             {status.text}
           </Text>
         </Box>
-        <Text dimColor>{b.status === 'down' ? 'hub down, session still working' : `${who}${isBusy ? 'Claude is working' : 'Claude is idle'}`}</Text>
+        <Text dimColor>
+          {b.status === 'down' ? 'hub down, session still working' : `${who}${isBusy ? 'Claude is working' : 'Claude is idle'}`}
+        </Text>
         {found.map(problem => (
           <Text color="yellow" wrap="wrap">
             {problem}

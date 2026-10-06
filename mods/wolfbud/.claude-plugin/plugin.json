@@ -8,7 +8,7 @@
     "api_key": {
       "type": "string",
       "title": "ElevenLabs API key",
-      "description": "The hub mints call tokens with it. Falls back to the ELEVENLABS_API_KEY environment variable. The first session to start the hub is the one whose key it keeps.",
+      "description": "The hub mints call tokens with it. Falls back to the ELEVENLABS_API_KEY environment variable. Each /wolfbud hands it to the hub, which keeps the first non-empty one.",
       "sensitive": true
     }
   }

@@ -1,19 +1,16 @@
 /** The shared hub (bridge/server.mjs) and this session's subscription to it. */
 export type WolfbudHub = {
-  status: 'off' | 'starting' | 'ready' | 'down' | 'error'
-  /** Fixed origin: 127.0.0.1:4747. The mic grant is per origin, so it does not walk. */
-  port: number
+  /** `off`: not started or stopped here. `ready`: subscribed. `down`: wanted, but the hub isn't answering. */
+  status: 'off' | 'ready' | 'down'
   error: string | null
   hasApiKey: boolean
   isWindowBuilt: boolean
   isWindowOpen: boolean
-  /** The person started WolfBud and hasn't stopped it: a reload subscribes again. */
-  isWanted: boolean
   /** Stable across a reload. A new session mints another. */
   sessionId: string
   /** Pulls this session's inbox only. Not the key that can enqueue for every session. */
   sessionToken: string
-  /** From ~/.wolfbud/hub.json. Subscribes and asks the hub to show the window. */
+  /** From ~/.wolfbud/hub.json. Subscribes. */
   serviceToken: string
   /** Short name the voice uses (`auth`, `auth-2`). */
   name: string

@@ -28,18 +28,11 @@ export type ClaudeEvent =
     }
   | { kind: 'notification'; at: number; message: string; type: string }
 
-/** The session's facts the window shows and hands the agent. */
-export type SessionInfo = { project: string; cwd: string; name?: string }
-
-/** What this session's mod can do. The hub will not enqueue a command the row lacks. */
-export type SessionCapability = 'submit' | 'steer' | 'abort' | 'snapshot'
-
 /** One subscribed Claude, as the window's roster draws it. */
 export type RosterRow = {
   id: string
   name: string
   project: string
-  cwd: string
   isBusy: boolean
   badge: number
 }
@@ -50,11 +43,19 @@ export type HubCommand =
   | { id: string; type: 'stop'; reason: string }
   | { id: string; type: 'snapshot' }
 
-/** Call and window facts fanned out to every subscribed pane. */
-export type HubNotice =
-  | { t: 'status'; call: CallStatus; mode: VoiceMode | null; error?: string }
-  | { t: 'line'; role: 'user' | 'agent'; text: string }
-  | { t: 'window'; open: boolean; count: number }
+/** Something said on the call, queued for every subscribed pane. */
+export type HubLine = { role: 'user' | 'agent'; text: string }
+
+/** The one call, as the window last reported it. */
+export type HubCall = { status: CallStatus; mode: VoiceMode | null; error: string | null }
+
+/** What a pull of a session's inbox answers: its queue, plus the facts as they stand now. */
+export type PullResponse = {
+  commands: HubCommand[]
+  lines: HubLine[]
+  call: HubCall
+  isWindowOpen: boolean
+}
 
 /** What the hub asks of the window, over SSE. */
 export type WindowCommand = 'start-call' | 'end-call' | 'raise' | 'superseded'
