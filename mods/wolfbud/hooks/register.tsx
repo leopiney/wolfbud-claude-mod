@@ -24,7 +24,7 @@ const MAX_LINES = 80
 // label and a 1-cell gap.
 const PANE_CHROME_ROWS = 5
 const LINE_INDENT = 9
-const USAGE = 'Usage: /wolfbud [call | end | window | stop | status]'
+const USAGE = 'Usage: /wolfbud [call | end | window | hide | stop | status]'
 const LEAD = 'The user asked WolfBud, the voice assistant on a call beside this session, to pass this on:'
 const HUB_DOWN = 'WolfBud hub is down. This session keeps working.'
 const NO_WINDOW = 'No WolfBud window is open.'
@@ -66,6 +66,30 @@ function readSettings(options: PluginOptions): Settings {
 
 async function patchHub($: EngineInterface, patch: Partial<WolfbudHub>): Promise<void> {
   await update($, hub, current => ({ ...current, ...patch }))
+  await refreshStatus($)
+}
+
+/**
+ * The pane folded into one status line: shown while this session is
+ * subscribed and the pane is closed, cleared while the pane is up.
+ */
+async function refreshStatus($: EngineInterface): Promise<void> {
+  const [b, c, { isBusy }, panes] = await Promise.all([read($, hub), read($, call), read($, claude), $.ui.panes()])
+  if (b.status === 'off' || panes.some(pane => pane.id === PANE)) {
+    $.ui.status(undefined)
+    return
+  }
+  if (b.status === 'down') {
+    $.ui.status('WolfBud ✕ hub down · /wolfbud to retry')
+    return
+  }
+  const who = b.name !== '' ? `${b.name} · ` : ''
+  $.ui.status(`WolfBud ${callLabel(c).text} · ${who}${isBusy ? 'Claude is working' : 'Claude is idle'} · /wolfbud to expand`)
+}
+
+async function openPane($: EngineInterface): Promise<void> {
+  await $.ui.open({ id: PANE, title: 'WolfBud' })
+  await refreshStatus($)
 }
 
 async function addLine($: EngineInterface, role: WolfbudLine['role'], text: string): Promise<void> {
@@ -310,6 +334,7 @@ async function unsubscribe($: EngineInterface): Promise<void> {
   }
   await update($, hub, () => IDLE_HUB)
   await update($, call, () => IDLE_CALL)
+  await refreshStatus($)
 }
 
 /** The call as the hub reports it on every pull. A change of state is a note in the transcript. */
@@ -318,6 +343,7 @@ async function applyCall($: EngineInterface, next: HubCall, isWindowOpen: boolea
   if (current.isWindowOpen !== isWindowOpen) await patchHub($, { isWindowOpen })
   if (before.status === next.status && before.mode === next.mode && before.error === next.error) return
   await update($, call, () => next)
+  await refreshStatus($)
   if (next.status === 'live' && before.status !== 'live') await addLine($, 'note', 'Call started')
   if (next.status !== 'live' && before.status === 'live') await addLine($, 'note', 'Call ended')
   if (next.status === 'error' && next.error && before.error !== next.error) await addLine($, 'note', next.error)
@@ -445,7 +471,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'wolfbud',
       description: 'WolfBud: a voice coworker that watches this session and can message Claude',
-      argumentHint: '[call | end | window | stop | status]',
+      argumentHint: '[call | end | window | hide | stop | status]',
     })
     // A reload dropped the poll. The hub is still up; subscribe the same session again.
     if (e.isInteractive && (await read($, hub)).status !== 'off') await connect($)
@@ -457,15 +483,18 @@ export const register: Register = (on, options) => {
     switch (arg) {
       case '':
       case 'open':
-        await $.ui.open({ id: PANE, title: 'WolfBud' })
+        await openPane($)
         return { text: await showWindow($, false) }
       case 'call':
-        await $.ui.open({ id: PANE, title: 'WolfBud' })
+        await openPane($)
         return { text: await showWindow($, true) }
       case 'end':
         return { text: await endCall($) }
       case 'window':
         return { text: await showWindow($, false) }
+      case 'hide':
+        await $.ui.close({ id: PANE })
+        return { text: 'WolfBud folded into the status line. /wolfbud brings the pane back.' }
       case 'stop':
         await unsubscribe($)
         return { text: 'This session left WolfBud. Other sessions keep the window.' }
@@ -494,6 +523,7 @@ export const register: Register = (on, options) => {
 
   on('turn.start', async ($, e, next) => {
     await update($, claude, () => ({ isBusy: true, turnId: e.turnId }))
+    await refreshStatus($)
     report($, { kind: 'turn-start', at: await $.clock.now() })
     return next(e)
   })
@@ -519,6 +549,7 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       await update($, claude, () => ({ isBusy: false, turnId: null }))
+      await refreshStatus($)
       report($, {
         kind: 'turn-complete',
         at: await $.clock.now(),
@@ -540,6 +571,13 @@ export const register: Register = (on, options) => {
     await update($, claude, () => ({ isBusy: false, turnId: null }))
     await unsubscribe($)
     return next(e)
+  })
+
+  // The person closing the pane (its mark or a key) folds it into the status line too.
+  on('ui.close', async ($, e, next) => {
+    const closed = await next(e)
+    if (e.id === PANE) await refreshStatus($)
+    return closed
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -600,6 +638,7 @@ export const register: Register = (on, options) => {
             <Button key="call" label="Call WolfBud" hotkey="c" variant="primary" onPress={() => showWindow($, true)} />
           )}
           <Button key="window" label="Window" hotkey="w" onPress={() => showWindow($, false)} />
+          <Button key="hide" label="Hide" hotkey="h" role="dismiss" onPress={() => $.ui.close({ id: PANE })} />
         </Box>
       </Box>
     )

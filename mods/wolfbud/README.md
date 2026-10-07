@@ -62,9 +62,10 @@ claude --plugin-dir ./mods/wolfbud
 | `/wolfbud end`    | hang up the one call. Other subscriptions stay                         |
 | `/wolfbud window` | raise the window and focus this session                                |
 | `/wolfbud status` | hub, window, call, and anything missing                                |
+| `/wolfbud hide`   | close the pane and fold it into one status line. `/wolfbud` unfolds it |
 | `/wolfbud stop`   | unsubscribe this session only. Another Claude's wolf stays up          |
 
-The pane's buttons (`c` call, `e` end, `w` window) do the same. In the fullscreen layout the pane docks beside the transcript.
+The pane's buttons (`c` call, `e` end, `w` window, `h` hide) do the same. In the fullscreen layout the pane docks beside the transcript.
 
 ## Options
 

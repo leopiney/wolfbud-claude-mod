@@ -76,7 +76,23 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
-  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  const panes = new Set<string>()
+  const statuses: Array<string | undefined> = []
+  on('ui.open', (_$, e) => {
+    panes.add(e.id)
+    return { value: { isPlaced: true as const } }
+  })
+  on('ui.close', (_$, e) => {
+    panes.delete(e.id)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({
+    value: [...panes].map(id => ({ id, title: 'WolfBud', isShown: true, isFocused: false, isPlaced: true })),
+  }))
+  on('ui.status', (_$, e) => {
+    statuses.push(e.text)
+    return { value: undefined }
+  })
   on('session.cwd', () => ({ value: '/repo/shop' }))
   on('session.messages', () => ({ value: [] }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
@@ -98,7 +114,7 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
     return postsTo('/events').flatMap(post => (post.body.events as Array<Record<string, unknown>> | undefined) ?? [])
   }
 
-  return { posts, runs, submitted, appended, commands, lines, state, until, postsTo, reported, clock }
+  return { posts, runs, submitted, appended, commands, lines, state, until, postsTo, reported, clock, panes, statuses }
 }
 
 type Hub = ReturnType<typeof fakeHub>
@@ -180,6 +196,29 @@ describe('the hub', () => {
     expect(answer.text).toBe('Ending the call.')
     expect(hub.postsTo('/api/session/call/end')).toHaveLength(1)
     expect(hub.postsTo('/bye')).toHaveLength(0)
+  })
+
+  test('/wolfbud hide folds the pane into one status line, and /wolfbud unfolds it', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    expect(hub.statuses.at(-1)).toBeUndefined()
+
+    const answer = await $.command.run({ command: 'wolfbud', args: 'hide', ...FROM_COMPOSER })
+
+    expect(answer.text).toBe('WolfBud folded into the status line. /wolfbud brings the pane back.')
+    expect(hub.panes.has('wolfbud')).toBe(false)
+    expect(hub.statuses.at(-1)).toBe('WolfBud ○ not on a call · shop · Claude is idle · /wolfbud to expand')
+    expect(hub.postsTo('/bye')).toHaveLength(0)
+
+    hub.state.call = { status: 'live', mode: 'listening', error: null }
+    await pull(hub, hub.clock)
+    await hub.clock.settle()
+    expect(hub.statuses.at(-1)).toBe('WolfBud ● on a call · listening · shop · Claude is idle · /wolfbud to expand')
+
+    await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
+    expect(hub.panes.has('wolfbud')).toBe(true)
+    expect(hub.statuses.at(-1)).toBeUndefined()
   })
 
   test('/wolfbud stop unsubscribes this session only', async ($, on) => {
@@ -410,6 +449,20 @@ describe('the pane', () => {
       await ui.unmount()
     })
   }
+
+  test('the Hide button closes the pane and leaves the status line', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on)
+    await startWolfbud($, hub)
+
+    const ui = await $.ui.mount({ plugin: 'wolfbud', surface: 'terminal', component: 'Pane', requestId: 'wolfbud', props: PANE_PROPS })
+    await ui.press({ key: 'hide' })
+    await hub.clock.settle()
+
+    expect(hub.panes.has('wolfbud')).toBe(false)
+    expect(hub.statuses.at(-1)).toContain('WolfBud ○ not on a call')
+    await ui.unmount()
+  })
 
   test('a call state that has not changed adds no line on the next pull', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
