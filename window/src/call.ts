@@ -2,15 +2,20 @@
 //
 // Its client tools are the agent's hands: names must match agent.json's. What
 // the agent hears about Claude arrives two ways: contextual updates (quiet:
-// folded in, never answered) and "[claude event]" user messages (the agent
-// says something). The second kind waits for a gap in the conversation, so
-// WolfBud never talks over the user or itself.
+// folded in, never answered, never interrupting) and "[claude event]" user
+// messages (the agent says something). An event worth saying goes in as
+// context at once, and its message waits in announcements.ts until the agent's
+// turn is over, so one event never cuts off the agent mid-reply to another.
+// When several wait, the agent says the first, knows the count, and offers the
+// rest; it pulls each next one with `wolfbud_next_update`.
 
 import { Conversation } from '@elevenlabs/client'
 import type { VoiceConversation } from '@elevenlabs/client'
 
 import type { CallStatus, VoiceMode } from '../../mods/wolfbud/hooks/events'
 import type { Bridge } from './bridge'
+import { AnnouncementQueue } from './announcements'
+import type { Announcement } from './announcements'
 import type { ActivityFocus } from './context'
 
 export type CallView = {
@@ -33,20 +38,21 @@ export type CallDeps = {
 
 const VAD_SPEAKING = 0.5
 const USER_HOLD_MS = 1500
-const ANNOUNCE_GAP_MS = 6000
-const ANNOUNCE_STALE_MS = 90_000
+const PENDING_CONTEXT = 'wolfbud_pending'
 const HEARTBEAT_MS = 25_000
-const PROMISE = /\b(?:one (?:sec|second|moment)|let me (?:send|tell|pass|ask|check|look|pull)|i'?ll (?:send|tell|pass|ask|let claude)|sending (?:that|it)|passing (?:that|it))\b/i
+const PROMISE =
+  /\b(?:one (?:sec|second|moment)|let me (?:send|tell|pass|ask|check|look|pull)|i'?ll (?:send|tell|pass|ask|let claude)|sending (?:that|it)|passing (?:that|it))\b/i
 const NUDGE = '[continue] You said you would do something but did not call the tool. Call it now and carry on from its result.'
 const JUNK = /^[\s.…·,!?-]*$/
 /** Eleven v4's audio tags ("[laughing]") steer the voice; they're not words to show. */
 const AUDIO_TAG = /\[[^\]\n]{1,40}\]/g
 
 function shown(text: string): string {
-  return text.replace(AUDIO_TAG, '').replace(/\s{2,}/g, ' ').trim()
+  return text
+    .replace(AUDIO_TAG, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
-
-type Announcement = { text: string; kind: string; at: number }
 
 export class WolfCall {
   private conversation: VoiceConversation | null = null
@@ -57,7 +63,7 @@ export class WolfCall {
   private lastMessageAt = 0
   private lastToolAt = 0
   private lastNudgeAt = 0
-  private queue: Announcement[] = []
+  private readonly announcements = new AnnouncementQueue()
   private timers: number[] = []
   private watchdog: number | null = null
 
@@ -128,6 +134,7 @@ export class WolfCall {
         onError: message => console.warn('[call]', message),
         onModeChange: ({ mode }) => {
           this.voiceMode = mode
+          this.announcements.agentSpeaking(mode === 'speaking', Date.now())
           this.deps.view.mode(mode)
           if (this.state === 'live') this.deps.bridge.status('live', mode)
         },
@@ -136,10 +143,13 @@ export class WolfCall {
           if (JUNK.test(message)) return
           if (role === 'user') {
             this.lastUserVoiceAt = Date.now()
+            this.announcements.userSpoke(Date.now())
+            this.announcements.replyOwed(Date.now())
             this.clearWatchdog()
             this.deps.view.userLine(message)
             this.deps.bridge.line('user', message)
           } else {
+            this.announcements.agentReplied(Date.now())
             this.deps.view.agentLine(message, true)
             this.deps.bridge.line('agent', message)
             this.armWatchdog(message)
@@ -147,14 +157,18 @@ export class WolfCall {
         },
         onDebug: (event: { type?: string; response?: string }) => {
           const text = event.type === 'tentative_agent_response' && event.response ? shown(event.response) : ''
-          if (text !== '' && !JUNK.test(text)) this.deps.view.agentLine(text, false)
+          if (text === '' || JUNK.test(text)) return
+          this.announcements.agentDrafting(Date.now())
+          this.deps.view.agentLine(text, false)
         },
         onAgentResponseCorrection: ({ corrected_agent_response: raw }) => {
           const corrected = shown(raw)
           if (!JUNK.test(corrected)) this.deps.view.agentLine(corrected, true)
         },
         onVadScore: ({ vadScore }) => {
-          if (vadScore >= VAD_SPEAKING) this.lastUserVoiceAt = Date.now()
+          if (vadScore < VAD_SPEAKING) return
+          this.lastUserVoiceAt = Date.now()
+          this.announcements.userSpoke(Date.now())
         },
       })) as VoiceConversation
     } catch (error) {
@@ -190,15 +204,21 @@ export class WolfCall {
     }
   }
 
-  /** Something the agent should say, once there's a gap. A newer one of the same kind replaces a waiting one. */
-  announce(text: string, kind: string): void {
+  /**
+   * Something the agent should say. `context` goes in now, without cutting off
+   * anything, and so does the new count of what is waiting; the message waits
+   * its turn. A newer one of the same kind replaces a waiting one.
+   */
+  announce(item: Omit<Announcement, 'at'>, context: string): void {
     if (!this.isLive) return
-    this.queue = this.queue.filter(item => item.kind !== kind)
-    this.queue.push({ text, kind, at: Date.now() })
+    this.context(context)
+    this.announcements.push(item, Date.now())
+    this.context(this.announcements.pendingNote(), PENDING_CONTEXT)
   }
 
   private onConnected(): void {
     this.voiceMode = 'speaking'
+    this.announcements.agentSpeaking(true, Date.now())
     this.setStatus('live')
     this.lastMessageAt = Date.now()
     this.timers.push(window.setInterval(() => this.drain(), 500))
@@ -210,16 +230,16 @@ export class WolfCall {
     return Date.now() - this.lastUserVoiceAt < USER_HOLD_MS
   }
 
+  /** Once the agent has finished and the user isn't talking: the first waiting event, or the offer of the rest. */
   private drain(): void {
     this.deps.view.userSpeaking(this.isUserSpeaking())
+    if (!this.isLive) return
     const now = Date.now()
-    this.queue = this.queue.filter(item => now - item.at < ANNOUNCE_STALE_MS)
-    if (!this.isLive || this.queue.length === 0) return
-    if (this.voiceMode === 'speaking' || this.isUserSpeaking() || now - this.lastMessageAt < ANNOUNCE_GAP_MS) return
-    const next = this.queue.shift()
-    if (next === undefined) return
+    const turn = this.announcements.take(now, this.isUserSpeaking())
+    if (turn === null) return
     this.lastMessageAt = now
-    this.conversation?.sendUserMessage(next.text)
+    if (turn.type === 'announce') this.context(this.announcements.pendingNote(), PENDING_CONTEXT)
+    this.conversation?.sendUserMessage(turn.text)
   }
 
   /** Long silences are the norm on this call; activity keeps the agent from checking in. */
@@ -245,6 +265,7 @@ export class WolfCall {
       if (Date.now() - this.lastNudgeAt < 15_000) return
       this.lastNudgeAt = Date.now()
       this.lastMessageAt = Date.now()
+      this.announcements.replyOwed(Date.now())
       this.conversation?.sendUserMessage(NUDGE)
     }
     this.watchdog = window.setTimeout(check, 5000)
@@ -259,15 +280,17 @@ export class WolfCall {
     for (const timer of this.timers) window.clearInterval(timer)
     this.timers = []
     this.clearWatchdog()
-    this.queue = []
+    this.announcements.clear()
     this.conversation = null
     this.deps.view.userSpeaking(false)
   }
 
   /** Keys are the tool names in agent.json: the whole contract with the agent. */
   private tools(): Record<string, (parameters: Record<string, unknown>) => Promise<string> | string> {
+    // A tool call means the agent answers its result next: hold the queue for that.
     const touch = () => {
       this.lastToolAt = Date.now()
+      this.announcements.replyOwed(Date.now())
       this.clearWatchdog()
     }
     return {
@@ -292,6 +315,12 @@ export class WolfCall {
           reason: String(parameters.reason ?? ''),
           ...(session !== '' ? { session } : {}),
         })
+      },
+      wolfbud_next_update: () => {
+        touch()
+        const next = this.announcements.next(Date.now())
+        this.context(this.announcements.pendingNote(), PENDING_CONTEXT)
+        return next ?? 'No updates are waiting.'
       },
       wolfbud_claude_activity: parameters => {
         touch()

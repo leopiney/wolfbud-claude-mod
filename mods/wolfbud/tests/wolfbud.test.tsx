@@ -23,7 +23,14 @@ const json = (body: object, status = 200) => ({ value: { status, ok: status < 40
  * throws that many times first. Commands and lines wait for the poll, which
  * runs when the test advances the clock; `call` rides on every pull.
  */
-function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
+function fakeHub(
+  on: On,
+  {
+    healthFails = 0,
+    hubFile = HUB_FILE,
+    subscribeStatus = 200,
+  }: { healthFails?: number; hubFile?: string | null; subscribeStatus?: number } = {},
+) {
   const posts: Post[] = []
   const runs: string[][] = []
   const submitted: string[] = []
@@ -45,7 +52,7 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   }
   const until = (check: () => boolean) => (check() ? Promise.resolve() : new Promise<void>(done => waiting.push({ check, done })))
 
-  on('fs.read', () => ({ value: HUB_FILE }))
+  on('fs.read', () => (hubFile === null ? { deny: 'ENOENT: no such file' } : { value: hubFile }))
   on('http.fetch', (_$, e) => {
     const url = new URL(e.url)
     const body = JSON.parse(e.init?.body ?? '{}') as Record<string, unknown>
@@ -60,6 +67,7 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
         }
         return json({ ok: true, hasApiKey: true, isWindowBuilt: true, windows: 0 })
       case '/api/subscribe':
+        if (subscribeStatus !== 200) return json({ error: 'bad key' }, subscribeStatus)
         return json({ token: 'sess-token', name: 'shop', hasApiKey: true, isWindowBuilt: true, windows: 0 })
       case '/api/session/window':
         return json({ ok: true, connected: false })
@@ -78,6 +86,11 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   const panes = new Set<string>()
   const statuses: Array<string | undefined> = []
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   on('ui.open', (_$, e) => {
     panes.add(e.id)
     return { value: { isPlaced: true as const } }
@@ -114,7 +127,7 @@ function fakeHub(on: On, { healthFails = 0 }: { healthFails?: number } = {}) {
     return postsTo('/events').flatMap(post => (post.body.events as Array<Record<string, unknown>> | undefined) ?? [])
   }
 
-  return { posts, runs, submitted, appended, commands, lines, state, until, postsTo, reported, clock, panes, statuses }
+  return { posts, runs, submitted, appended, commands, lines, state, until, postsTo, reported, clock, panes, statuses, toasts }
 }
 
 type Hub = ReturnType<typeof fakeHub>
@@ -129,6 +142,70 @@ async function startWolfbud($: Engine, hub: Hub) {
 async function pull(hub: Hub, clock: MockClock) {
   await clock.advance(1)
 }
+
+describe('a remote session', () => {
+  test('reaches the hub through the tunnel, says so, and tells the roster where it runs', async ($, on) => {
+    mock.env(on, { HOME: '/home/dev', SSH_CONNECTION: '10.0.0.5 50000 10.0.0.9 22', HOSTNAME: 'sandbox-7' })
+    const hub = fakeHub(on)
+
+    const answer = await startWolfbud($, hub)
+
+    expect(answer.text).toBe('Opening WolfBud.')
+    expect(hub.runs).toEqual([])
+    expect(hub.postsTo('/api/subscribe')[0]?.body).toMatchObject({ isRemote: true, host: 'sandbox-7' })
+    const status = await $.command.run({ command: 'wolfbud', args: 'status', ...FROM_COMPOSER })
+    expect(status.text).toContain('remote session: through the tunnel to your machine')
+  })
+
+  test('never launches a hub of its own, and says plainly how to reach the one on your machine', async ($, on) => {
+    mock.env(on, { HOME: '/home/dev', WOLFBUD_REMOTE: '1' })
+    const hub = fakeHub(on, { healthFails: 1_000 })
+
+    const answer = await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
+
+    expect(hub.runs).toEqual([])
+    expect(hub.postsTo('/api/subscribe')).toHaveLength(0)
+    expect(answer.text).toContain("Can't reach the WolfBud hub from this remote session")
+    expect(answer.text).toContain('ssh -R 4747:127.0.0.1:4747')
+    expect(hub.toasts).toHaveLength(1)
+    await $.command.run({ command: 'wolfbud', args: 'hide', ...FROM_COMPOSER })
+    expect(hub.statuses.at(-1)).toBe("WolfBud ✕ can't reach your machine's hub · /wolfbud status")
+
+    // The retry loop finds the same problem: no second toast.
+    await hub.clock.advance(2_000)
+    await hub.clock.advance(2_000)
+    expect(hub.toasts).toHaveLength(1)
+  })
+
+  test('with the tunnel up but no hub token, says to copy it', async ($, on) => {
+    mock.env(on, { HOME: '/home/dev', WOLFBUD_REMOTE: '1' })
+    fakeHub(on, { hubFile: null })
+
+    const answer = await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
+
+    expect(answer.text).toContain('this machine has no hub token')
+    expect(answer.text).toContain("jq '{token}' ~/.wolfbud/hub.json")
+  })
+
+  test('a token the hub refuses is named as the problem', async ($, on) => {
+    mock.env(on, { HOME: '/home/dev', WOLFBUD_REMOTE: '1' })
+    fakeHub(on, { subscribeStatus: 401 })
+
+    const answer = await $.command.run({ command: 'wolfbud', args: '', ...FROM_COMPOSER })
+
+    expect(answer.text).toContain('The hub refused the token')
+  })
+
+  test('WOLFBUD_REMOTE=0 overrides an SSH login: the session is local and may launch the hub', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test', SSH_CONNECTION: '10.0.0.5 50000 10.0.0.9 22', WOLFBUD_REMOTE: '0' })
+    const hub = fakeHub(on, { healthFails: 1 })
+
+    await startWolfbud($, hub)
+
+    expect(hub.runs).toHaveLength(1)
+    expect(hub.postsTo('/api/subscribe')[0]?.body).toMatchObject({ isRemote: false, host: '' })
+  })
+})
 
 describe('the hub', () => {
   test('/wolfbud subscribes this session and asks the hub to show the one window', async ($, on) => {

@@ -9,7 +9,7 @@
     <script type="module" src="./src/main.ts"></script>
   </head>
   <body>
-    <main id="app" class="app" data-call="idle" data-mode="listening" data-claude="idle" data-hearing="no" data-wolf="shown">
+    <main id="app" class="app" data-call="idle" data-mode="listening" data-claude="idle" data-hearing="no">
       <header class="top">
         <span class="claude-chip"><span class="claude-dot"></span><span id="claude-status">No session yet</span></span>
       </header>
@@ -24,12 +24,12 @@
         <p id="status" class="status" aria-live="polite">Not on a call</p>
       </section>
 
-      <section class="captions" aria-live="polite">
+      <section id="captions" class="captions" aria-live="polite">
         <p id="caption-agent" class="caption caption-agent"></p>
         <p id="caption-user" class="caption caption-user"></p>
       </section>
 
-      <section class="activity">
+      <section id="activity" class="activity">
         <h2>Focused session</h2>
         <ul id="feed" class="feed"></ul>
       </section>

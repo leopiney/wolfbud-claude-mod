@@ -74,7 +74,8 @@ export function sessionSpoken(event: ClaudeEvent, name: string): string | null {
 /** The events worth saying out loud, as the "[claude event]" message the agent answers. */
 export function spokenEvent(event: ClaudeEvent): string | null {
   if (event.kind === 'turn-complete') {
-    const how = event.reason === 'answer' ? 'finished its task' : event.reason === 'aborted' ? 'was interrupted' : `stopped (${event.reason})`
+    const how =
+      event.reason === 'answer' ? 'finished its task' : event.reason === 'aborted' ? 'was interrupted' : `stopped (${event.reason})`
     const answer = event.answer.trim() === '' ? 'It left no final message.' : `Its final message: "${clip(event.answer, 900)}"`
     return `[claude event] Claude ${how} after ${seconds(event.durationMs)}. ${answer} Tell the user the gist in one short sentence.`
   }
@@ -93,7 +94,23 @@ export function spokenEvent(event: ClaudeEvent): string | null {
 export function quietEvent(event: ClaudeEvent): string | null {
   if (event.kind === 'notification' && event.type === 'clear') return `[claude activity] ${event.message}`
   const spoken = spokenEvent(event)
-  return spoken === null ? null : spoken.replace('[claude event]', '[claude activity]').replace(/ (Tell|Let|Mention) [^.]*\.$/, '')
+  return spoken === null ? null : quietOf(spoken)
+}
+
+/** A few words naming a spoken event, for the waiting list ("shop finished a task"). */
+export function eventLabel(event: ClaudeEvent, name: string): string {
+  if (event.kind === 'turn-complete') {
+    return `${name} ${event.reason === 'answer' ? 'finished a task' : event.reason === 'aborted' ? 'was interrupted' : 'stopped'}`
+  }
+  if (event.kind === 'notification' && (/permission/i.test(event.type) || /permission/i.test(event.message))) {
+    return `${name} is waiting for permission`
+  }
+  return `${name} has a notice`
+}
+
+/** A spoken event as quiet context: the same facts, without the instruction to say them. */
+export function quietOf(spoken: string): string {
+  return spoken.replace(/^\[(?:claude|session) event\]/, '[claude activity]').replace(/ (Tell|Let|Mention) [^.]*\.$/, '')
 }
 
 export type ActivityFocus = 'last_answer' | 'recent_steps' | 'errors' | 'overview'
@@ -105,13 +122,19 @@ export function activityAnswer(focus: ActivityFocus, events: readonly ClaudeEven
     case 'last_answer': {
       const answer = lastAnswer(events)
       if (answer) return `Claude's latest final message (${seconds(Date.now() - answer.at)} ago): ${clip(answer.answer, 2500) || '(empty)'}`
-      return snapshot !== '' ? `No task has finished since the call started. From the session snapshot:\n${snapshot}` : 'Claude has not finished a task in this session yet.'
+      return snapshot !== ''
+        ? `No task has finished since the call started. From the session snapshot:\n${snapshot}`
+        : 'Claude has not finished a task in this session yet.'
     }
     case 'recent_steps':
-      return steps.length === 0 ? 'Claude has not run any tools yet.' : `Claude's latest steps, oldest first:\n${steps.slice(-15).map(stepLine).join('\n')}`
+      return steps.length === 0
+        ? 'Claude has not run any tools yet.'
+        : `Claude's latest steps, oldest first:\n${steps.slice(-15).map(stepLine).join('\n')}`
     case 'errors': {
       const failed = steps.filter(step => step.status !== 'ok')
-      return failed.length === 0 ? 'No failed steps recently.' : `Recent failed steps, oldest first:\n${failed.slice(-8).map(stepLine).join('\n')}`
+      return failed.length === 0
+        ? 'No failed steps recently.'
+        : `Recent failed steps, oldest first:\n${failed.slice(-8).map(stepLine).join('\n')}`
     }
     case 'overview': {
       const prompt = lastPrompt(events)
@@ -122,7 +145,9 @@ export function activityAnswer(focus: ActivityFocus, events: readonly ClaudeEven
         prompt ? `Latest prompt (${prompt.from === 'wolfbud' ? 'sent by you' : 'typed by the user'}): "${clip(prompt.text, 600)}"` : '',
         answer ? `Latest final message: "${clip(answer.answer, 800)}"` : '',
         snapshot,
-      ].filter(Boolean).join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n')
     }
   }
 }

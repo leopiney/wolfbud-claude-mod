@@ -12,6 +12,12 @@
   --bad: #ff7a8a;
   --badge-from: #3a3b8f;
   --badge-to: #1a1a44;
+  /* The head never draws smaller than this; main.ts reads it. */
+  --badge-min: 120px;
+  /* Captions get a fixed band and scroll inside it, so streamed text never takes the head's room. */
+  --captions-h: clamp(62px, 15vh, 8.4em);
+  /* The feed's band too: its title plus five short steps. Longer steps scroll inside it. */
+  --activity-h: 9.5em;
   font:
     14px/1.4 ui-sans-serif,
     system-ui,
@@ -39,11 +45,19 @@ button {
   color: inherit;
 }
 
-/* One column as wide as the window, so long text wraps instead of widening it; the stage gets the rows the text leaves. */
+/*
+ * One column as wide as the window, so long text wraps instead of widening it.
+ * The stage always keeps room for the smallest head, its ring, the gap and the
+ * status line. Captions and the feed have fixed bands that scroll, so streamed
+ * text never resizes the head, and they give way first when the window is short.
+ */
 .app {
+  --stage-min: calc(var(--badge-min) + 14px + 12px + 1.4em);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(1.4em, 1fr) auto auto auto;
+  grid-template-rows: auto auto minmax(var(--stage-min), 1fr) minmax(0, var(--captions-h)) minmax(0, var(--activity-h)) auto;
+  /* Named, so a hidden roster leaves its row empty instead of shifting the stage into it. */
+  grid-template-areas: 'top' 'roster' 'stage' 'captions' 'activity' 'controls';
   height: 100%;
   padding: 14px 16px 16px;
   gap: 10px;
@@ -53,6 +67,7 @@ button {
 }
 
 .top {
+  grid-area: top;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -61,6 +76,7 @@ button {
 }
 
 .roster {
+  grid-area: roster;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -95,6 +111,17 @@ button {
   margin-right: 6px;
   border-radius: 50%;
   background: var(--busy);
+}
+
+.roster-chip.remote {
+  border-style: dashed;
+}
+
+.roster-where {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 .roster-badge {
@@ -141,6 +168,7 @@ button {
 }
 
 .stage {
+  grid-area: stage;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -165,10 +193,6 @@ button {
   display: grid;
   place-items: center;
   transition: transform 0.2s ease;
-}
-
-.app[data-wolf='hidden'] .badge {
-  display: none;
 }
 
 .badge:active {
@@ -241,8 +265,10 @@ button {
 }
 
 .captions {
-  min-height: 62px;
+  grid-area: captions;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -263,6 +289,12 @@ button {
 .caption-user::before {
   content: 'you · ';
   color: var(--listen);
+}
+
+.activity {
+  grid-area: activity;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .activity h2 {
@@ -317,9 +349,15 @@ button {
 
 .feed-text {
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .controls {
+  grid-area: controls;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

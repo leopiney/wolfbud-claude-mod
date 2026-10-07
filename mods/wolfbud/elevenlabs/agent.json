@@ -88,6 +88,18 @@
     },
     {
       "type": "client",
+      "name": "wolfbud_next_update",
+      "description": "Takes the oldest update that is waiting to be told (a Claude session that finished a task, needs permission or has a notice) and returns it, with how many are still waiting after it. Call it when the user wants to hear the waiting updates, after you offered them or when they ask what else is going on. Tell the user the one it returns, like a [claude event] or [session event]: one at a time, never several in one breath. Returns \"No updates are waiting.\" when there are none.",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "expectsResponse": true,
+      "responseTimeoutSecs": 10
+    },
+    {
+      "type": "client",
       "name": "wolfbud_claude_activity",
       "description": "Looks up what one Claude Code session has been doing, in more detail than the activity notes you receive. Call it when the user asks what Claude did, said or changed, why something failed, or whether things are going well, and the notes you have do not answer it. Pass `session` when they name one; omit it for the focused session. Returns plain text to summarize, never to read verbatim.",
       "parameters": {

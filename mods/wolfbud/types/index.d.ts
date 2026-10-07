@@ -3,6 +3,8 @@ export type WolfbudHub = {
   /** `off`: not started or stopped here. `ready`: subscribed. `down`: wanted, but the hub isn't answering. */
   status: 'off' | 'ready' | 'down'
   error: string | null
+  /** This Claude runs off the hub's machine (SSH, a container): it reaches the hub through a tunnel and never launches one. */
+  isRemote: boolean
   hasApiKey: boolean
   isWindowBuilt: boolean
   isWindowOpen: boolean

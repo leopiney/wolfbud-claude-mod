@@ -35,6 +35,10 @@ export type RosterRow = {
   project: string
   isBusy: boolean
   badge: number
+  /** Runs off the hub's machine, through a tunnel. */
+  isRemote: boolean
+  /** Where a remote session runs, as its mod names it. Empty when local or unknown. */
+  host: string
 }
 
 /** A command the hub holds until the matching mod pulls it. */

@@ -67,6 +67,43 @@ claude --plugin-dir ./mods/wolfbud
 
 The pane's buttons (`c` call, `e` end, `w` window, `h` hide) do the same. In the fullscreen layout the pane docks beside the transcript.
 
+## Remote sessions
+
+A Claude session in a sandbox, a VM or a container can join the same call. **The hub always runs on your own machine**, because that's where Chrome, the mic and the ElevenLabs key are. The mod only makes outbound requests to `127.0.0.1:4747`, so the remote host doesn't expose anything. It only needs a tunnel back to your machine and the hub token.
+
+1. **Start the hub on your machine first.** Run `/wolfbud` in any local Claude session.
+2. **Tunnel port 4747 from the remote back to your machine.** From your machine:
+
+   ```bash
+   ssh -N -o ExitOnForwardFailure=yes -R 127.0.0.1:4747:127.0.0.1:4747 you@remote   # or autossh -M 0 … to keep it up
+   ```
+
+   Anything that makes `127.0.0.1:4747` on the remote reach `127.0.0.1:4747` on your machine as raw TCP works too, for example Tailscale (`tailscale serve --tcp 4747 tcp://127.0.0.1:4747` on your machine, `socat TCP-LISTEN:4747,bind=127.0.0.1,fork TCP:<your-machine>:4747` on the remote). An HTTP proxy that rewrites `Host` doesn't work, because the hub rejects any `Host` other than `127.0.0.1:4747`.
+
+3. **Copy the hub token into the remote's hub config.** Copy only the token, not the window key:
+
+   ```bash
+   jq '{token}' ~/.wolfbud/hub.json | ssh you@remote 'mkdir -p -m 700 ~/.wolfbud && umask 077 && cat > ~/.wolfbud/hub.json'
+   ```
+
+   The token survives hub restarts, so you copy it once.
+
+4. **Install the mod on the remote and run `/wolfbud` there.** Don't set an ElevenLabs key on the remote: the hub on your machine already has one.
+
+A session counts as remote when it runs under SSH (`SSH_CONNECTION`) or as a Claude Code cloud session (`CLAUDE_CODE_REMOTE=true`). For a container you `docker exec` into, set `WOLFBUD_REMOTE=1`. If you SSH into your own machine and want it treated as local, set `WOLFBUD_REMOTE=0`. A remote session never starts a hub of its own. If it did, that hub would have no window and would take the port the tunnel needs when it reconnects.
+
+If something is missing, a remote session tells you which step:
+
+| What you see                                           | Fix                                                                     |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `Can't reach the WolfBud hub from this remote session` | The hub isn't running on your machine, or the tunnel is down: steps 1–2 |
+| `this machine has no hub token`                        | Step 3                                                                  |
+| `The hub refused the token`                            | The token is stale or wrong: step 3 again                               |
+
+The status line reads `WolfBud ✕ can't reach your machine's hub` until the tunnel is back, and the mod reconnects by itself every 2s. `/wolfbud status` adds `(remote session: through the tunnel to your machine)` once it's connected.
+
+In the window's session list, each session shows where it runs: `local` for this machine, or `@host` with a dashed outline for a remote one. Hover a session for the full text. The host name comes from `WOLFBUD_HOST`, else `HOSTNAME`, else the SSH server's address. The voice agent also hears which sessions are remote.
+
 ## Options
 
 `userConfig` in `.claude-plugin/plugin.json`:
@@ -77,7 +114,7 @@ The pane's buttons (`c` call, `e` end, `w` window, `h` hide) do the same. In the
 
 The window is always one Google Chrome app window on `127.0.0.1:4747`. The port does not walk: the mic grant is per origin.
 
-Env overrides: `WOLFBUD_AGENT_ID` (an agent to use as it is, never synced; else the one the hub set up), `WOLFBUD_NODE` (else `node` on PATH, used only to run the launcher).
+Env overrides: `WOLFBUD_AGENT_ID` (an agent to use as it is, never synced; else the one the hub set up), `WOLFBUD_NODE` (else `node` on PATH, used only to run the launcher), `WOLFBUD_REMOTE` (`1` or `0`: force remote or local, see [Remote sessions](#remote-sessions)), `WOLFBUD_HOST` (the name a remote session shows in the session list).
 
 ## Changing the agent
 
@@ -93,7 +130,7 @@ Env overrides: `WOLFBUD_AGENT_ID` (an agent to use as it is, never synced; else 
 
 ## Security
 
-- The hub listens on 127.0.0.1 only and rejects other `Host` and `Origin` values.
+- The hub listens on 127.0.0.1 only and rejects other `Host` and `Origin` values. Remote sessions reach it through a tunnel you open (see [Remote sessions](#remote-sessions)). Don't expose port 4747 on a public URL: the window routes would be reachable too.
 - Three keys. `~/.wolfbud/hub.json` holds the service token a mod uses to subscribe, and nothing else. The window URL holds a different key, which can enqueue a command for a short name and cannot pull an inbox; Chrome's command line shows it, so it stays the weakest. Subscribe returns a session token that pulls that session's inbox, acks, shows the window and ends the call. It cannot enqueue for every session.
 - The agent requires signed tokens, so its id alone can't start a call.
 - The ElevenLabs key stays in the hub process and never reaches the browser.

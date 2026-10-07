@@ -191,7 +191,7 @@ function shortName(project) {
 }
 
 function rosterRow(row) {
-  return { id: row.id, name: row.name, project: row.project, isBusy: row.isBusy, badge: row.badge }
+  return { id: row.id, name: row.name, project: row.project, isBusy: row.isBusy, badge: row.badge, isRemote: row.isRemote, host: row.host }
 }
 
 function rosterPayload() {
@@ -288,6 +288,8 @@ function subscribe(body) {
   if (sessionId === '') return { status: 400, body: { error: 'sessionId required' } }
   adoptApiKey(body.apiKey)
   const project = String(body.project ?? 'session')
+  const isRemote = body.isRemote === true
+  const host = isRemote ? String(body.host ?? '').slice(0, 64) : ''
   let row = sessions.get(sessionId)
   if (!row) {
     row = {
@@ -296,6 +298,8 @@ function subscribe(body) {
       name: shortName(project),
       project,
       isBusy: Boolean(body.isBusy),
+      isRemote,
+      host,
       badge: 0,
       events: [],
       snapshot: '',
@@ -308,6 +312,8 @@ function subscribe(body) {
     if (!focusedId) focusedId = sessionId
   } else {
     row.project = project
+    row.isRemote = isRemote
+    row.host = host
   }
   tellWindow('roster', rosterPayload())
   return { status: 200, body: { token: row.token, name: row.name, ...healthBody() } }

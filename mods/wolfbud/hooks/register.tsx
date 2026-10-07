@@ -27,6 +27,18 @@ const LINE_INDENT = 9
 const USAGE = 'Usage: /wolfbud [call | end | window | hide | stop | status]'
 const LEAD = 'The user asked WolfBud, the voice assistant on a call beside this session, to pass this on:'
 const HUB_DOWN = 'WolfBud hub is down. This session keeps working.'
+const TUNNEL = `ssh -R ${PORT}:127.0.0.1:${PORT} <this host>`
+const REMOTE_NO_HUB =
+  "Can't reach the WolfBud hub from this remote session. The hub runs on your own machine: start it there first " +
+  `(/wolfbud in a local Claude session), then tunnel port ${PORT} back to it from your machine, e.g. \`${TUNNEL}\`. ` +
+  'See "Remote sessions" in the wolfbud README.'
+const REMOTE_NO_TOKEN =
+  'The hub answers through the tunnel, but this machine has no hub token. On your machine run ' +
+  "`jq '{token}' ~/.wolfbud/hub.json` and save the output here as ~/.wolfbud/hub.json, then /wolfbud again."
+const LOCAL_NO_TOKEN = 'The hub is up, but ~/.wolfbud/hub.json has no token. Restart the hub, then /wolfbud again.'
+const BAD_TOKEN = 'The hub refused the token in ~/.wolfbud/hub.json.'
+const REMOTE_BAD_TOKEN = `${BAD_TOKEN} Copy it again from the machine running the hub: \`jq '{token}' ~/.wolfbud/hub.json\`.`
+const REMOTE_READY = 'Remote session: connected to the hub on your machine through the tunnel.'
 const NO_WINDOW = 'No WolfBud window is open.'
 
 type Settings = { apiKey: string }
@@ -38,6 +50,7 @@ const IDLE_CALL: WolfbudCall = { status: 'idle', mode: null, error: null }
 const IDLE_HUB: WolfbudHub = {
   status: 'off',
   error: null,
+  isRemote: false,
   hasApiKey: false,
   isWindowBuilt: false,
   isWindowOpen: false,
@@ -80,7 +93,7 @@ async function refreshStatus($: EngineInterface): Promise<void> {
     return
   }
   if (b.status === 'down') {
-    $.ui.status('WolfBud ✕ hub down · /wolfbud to retry')
+    $.ui.status(b.isRemote ? "WolfBud ✕ can't reach your machine's hub · /wolfbud status" : 'WolfBud ✕ hub down · /wolfbud to retry')
     return
   }
   const who = b.name !== '' ? `${b.name} · ` : ''
@@ -138,13 +151,50 @@ async function isHubUp($: EngineInterface): Promise<boolean> {
   }
 }
 
-async function markDown($: EngineInterface): Promise<void> {
-  await patchHub($, { status: 'down', error: `${HUB_DOWN} /wolfbud tries again.` })
+/**
+ * Whether this Claude runs off the machine that owns the hub, window and mic.
+ * WOLFBUD_REMOTE=1 or 0 decides; unset, an SSH login or a Claude Code cloud
+ * session counts as remote. A container you exec into needs WOLFBUD_REMOTE=1.
+ */
+async function isRemoteSession($: EngineInterface): Promise<boolean> {
+  const flag = ((await $.env.get('WOLFBUD_REMOTE')) ?? '').trim().toLowerCase()
+  if (['1', 'true', 'yes'].includes(flag)) return true
+  if (['0', 'false', 'no'].includes(flag)) return false
+  const [ssh, cloud] = await Promise.all([$.env.get('SSH_CONNECTION'), $.env.get('CLAUDE_CODE_REMOTE')])
+  return Boolean(ssh) || cloud === 'true'
 }
 
-/** Starts the hub if nothing is answering, then reads the token the hub wrote. */
+/** What the roster calls a remote session's machine: WOLFBUD_HOST, else HOSTNAME, else the SSH server's address. */
+async function remoteHost($: EngineInterface): Promise<string> {
+  const [named, hostname, ssh] = await Promise.all([$.env.get('WOLFBUD_HOST'), $.env.get('HOSTNAME'), $.env.get('SSH_CONNECTION')])
+  return (named || hostname || (ssh ?? '').split(' ')[2] || '').trim()
+}
+
+/** Marks the hub down with what to do about it, and says so once each time the reason changes. */
+async function markDown($: EngineInterface, reason = `${HUB_DOWN} /wolfbud tries again.`): Promise<void> {
+  const before = await read($, hub)
+  await patchHub($, { status: 'down', error: reason })
+  if (before.status !== 'down' || before.error !== reason) $.ui.toast(`WolfBud: ${reason}`)
+}
+
+/** What a failed connect left to say, for a command's answer. */
+async function downText($: EngineInterface): Promise<string> {
+  return (await read($, hub)).error ?? HUB_DOWN
+}
+
+/**
+ * Starts the hub if nothing is answering, then reads the token the hub wrote.
+ * A remote session never starts one: a hub there would have no window, and it
+ * would hold the port the tunnel needs once the tunnel comes back.
+ */
 async function ensureHub($: EngineInterface): Promise<boolean> {
+  const isRemote = await isRemoteSession($)
+  await patchHub($, { isRemote })
   if (!(await isHubUp($))) {
+    if (isRemote) {
+      await markDown($, REMOTE_NO_HUB)
+      return false
+    }
     const node = (await $.env.get('WOLFBUD_NODE')) || 'node'
     const ran = await $.process.run([node, `${$.plugin.root}/bridge/launch.mjs`], { timeoutMs: 20_000 }).catch(() => null)
     if (ran === null || ran.exitCode !== 0 || !(await isHubUp($))) {
@@ -154,7 +204,7 @@ async function ensureHub($: EngineInterface): Promise<boolean> {
   }
   const token = await readServiceToken($)
   if (token === null) {
-    await markDown($)
+    await markDown($, isRemote ? REMOTE_NO_TOKEN : LOCAL_NO_TOKEN)
     return false
   }
   await patchHub($, { serviceToken: token })
@@ -216,7 +266,7 @@ async function poll($: EngineInterface, gen: number): Promise<void> {
     }
   } catch {
     if (gen !== pollGen) return
-    await markDown($)
+    await markDown($, current.isRemote ? REMOTE_NO_HUB : undefined)
     delay = 2000
   }
   if (gen !== pollGen) return
@@ -226,19 +276,25 @@ async function poll($: EngineInterface, gen: number): Promise<void> {
 async function subscribe($: EngineInterface): Promise<boolean> {
   const current = await read($, hub)
   const sessionId = current.sessionId !== '' ? current.sessionId : crypto.randomUUID()
-  const [cwd, { isBusy }, envKey] = await Promise.all([$.session.cwd(), read($, claude), $.env.get('ELEVENLABS_API_KEY')])
+  const [cwd, { isBusy }, envKey, host] = await Promise.all([
+    $.session.cwd(),
+    read($, claude),
+    $.env.get('ELEVENLABS_API_KEY'),
+    current.isRemote ? remoteHost($) : Promise.resolve(''),
+  ])
   try {
     const res = await hubFetch($, '/api/subscribe', {
       serviceToken: current.serviceToken,
-      body: { sessionId, project: projectName(cwd), isBusy, apiKey: settings.apiKey || envKey || '' },
+      body: { sessionId, project: projectName(cwd), isBusy, isRemote: current.isRemote, host, apiKey: settings.apiKey || envKey || '' },
     })
     const body = res.ok
       ? (JSON.parse(res.text) as { token?: string; name?: string; hasApiKey?: boolean; isWindowBuilt?: boolean; windows?: number })
       : {}
     if (typeof body.token !== 'string' || body.token === '') {
-      await markDown($)
+      await markDown($, res.status === 401 ? (current.isRemote ? REMOTE_BAD_TOKEN : BAD_TOKEN) : undefined)
       return false
     }
+    if (current.isRemote && current.status !== 'ready') await addLine($, 'note', REMOTE_READY)
     await patchHub($, {
       status: 'ready',
       sessionId,
@@ -252,7 +308,7 @@ async function subscribe($: EngineInterface): Promise<boolean> {
     startPoll($)
     return true
   } catch {
-    await markDown($)
+    await markDown($, current.isRemote ? REMOTE_NO_HUB : undefined)
     return false
   }
 }
@@ -291,11 +347,11 @@ async function ack($: EngineInterface, id: string, ok: boolean, message: string)
 
 async function showWindow($: EngineInterface, withCall: boolean, isRetry = false): Promise<string> {
   const current = await read($, hub)
-  if (current.status !== 'ready' && !(await connect($))) return HUB_DOWN
+  if (current.status !== 'ready' && !(await connect($))) return downText($)
   try {
     const res = await hubFetch($, '/api/session/window', { body: { call: withCall } })
     // The hub forgot us (it restarted): subscribe again, once.
-    if (res.status === 401 && !isRetry) return (await connect($)) ? showWindow($, withCall, true) : HUB_DOWN
+    if (res.status === 401 && !isRetry) return (await connect($)) ? showWindow($, withCall, true) : downText($)
     if (!res.ok) return 'WolfBud could not open the window.'
     const body = JSON.parse(res.text) as { connected?: boolean }
     if (body.connected) await patchHub($, { isWindowOpen: true })
@@ -304,8 +360,8 @@ async function showWindow($: EngineInterface, withCall: boolean, isRetry = false
     if (withCall) return `Calling WolfBud${focus}.`
     return body.connected ? `WolfBud is up${focus}.` : 'Opening WolfBud.'
   } catch {
-    await markDown($)
-    return HUB_DOWN
+    await markDown($, (await read($, hub)).isRemote ? REMOTE_NO_HUB : undefined)
+    return downText($)
   }
 }
 
@@ -427,7 +483,10 @@ async function stopClaude($: EngineInterface, request: StopCommand): Promise<voi
 async function statusText($: EngineInterface): Promise<string> {
   const [b, c] = await Promise.all([read($, hub), read($, call)])
   const where = b.name !== '' ? `${b.name}, ` : ''
-  const hubLine = b.status === 'ready' ? `hub on ${ORIGIN}` : `hub ${b.status}${b.error ? ` (${b.error})` : ''}`
+  const hubLine =
+    b.status === 'ready'
+      ? `hub on ${ORIGIN}${b.isRemote ? ' (remote session: through the tunnel to your machine)' : ''}`
+      : `hub ${b.status}`
   return [
     `WolfBud: ${where}${hubLine}, window ${b.isWindowOpen ? 'open' : 'closed'}, call ${c.status}.`,
     ...problems(b).map(problem => `- ${problem}`),
@@ -440,7 +499,10 @@ function problems(b: WolfbudHub): string[] {
   if (b.status !== 'ready') return []
   const found: string[] = []
   if (!b.hasApiKey) found.push('No ElevenLabs API key: set ELEVENLABS_API_KEY (or the api_key option), then run /wolfbud again.')
-  if (!b.isWindowBuilt) found.push('The window is not built: run `pnpm window:build` in the wolfbud-claude-mod repo.')
+  if (!b.isWindowBuilt) {
+    const where = b.isRemote ? ' on the machine running the hub' : ''
+    found.push(`The window is not built: run \`pnpm window:build\` in the wolfbud-claude-mod repo${where}.`)
+  }
   return found
 }
 
@@ -605,7 +667,11 @@ export const register: Register = (on, options) => {
           </Text>
         </Box>
         <Text dimColor>
-          {b.status === 'down' ? 'hub down, session still working' : `${who}${isBusy ? 'Claude is working' : 'Claude is idle'}`}
+          {b.status === 'down'
+            ? b.isRemote
+              ? "can't reach your machine's hub, session still working"
+              : 'hub down, session still working'
+            : `${who}${b.isRemote ? 'remote · ' : ''}${isBusy ? 'Claude is working' : 'Claude is idle'}`}
         </Text>
         {found.map(problem => (
           <Text color="yellow" wrap="wrap">

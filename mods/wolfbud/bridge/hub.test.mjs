@@ -137,6 +137,27 @@ test('the call state rides on every pull, and a line reaches every session', asy
   assert.equal(authBody.call.status, 'live')
 })
 
+test('the roster says where each session runs', async () => {
+  await ready()
+  await subscribe('sess-auth', 'auth')
+  const res = await fetch(
+    `${origin}/api/subscribe`,
+    json({ sessionId: 'sess-box', project: 'box', isRemote: true, host: 'sandbox-7' }, { 'x-wolfbud-key': 'service-token' }),
+  )
+  assert.equal(res.status, 200)
+
+  const stream = new AbortController()
+  const opened = await fetch(`${origin}/api/stream`, { headers: { 'x-wolfbud-key': 'window-key' }, signal: stream.signal })
+  const reader = opened.body.getReader()
+  let text = ''
+  while (!text.includes('\n\n')) text += new TextDecoder().decode((await reader.read()).value)
+  stream.abort()
+  const hello = JSON.parse(/^data: (.*)$/m.exec(text)[1])
+  const where = Object.fromEntries(hello.rows.map(row => [row.id, { isRemote: row.isRemote, host: row.host }]))
+  assert.deepEqual(where['sess-auth'], { isRemote: false, host: '' })
+  assert.deepEqual(where['sess-box'], { isRemote: true, host: 'sandbox-7' })
+})
+
 test.after(() => stop())
 process.on('exit', stop)
 void once(child, 'exit')

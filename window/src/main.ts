@@ -7,7 +7,17 @@ import type { ClaudeEvent, RosterRow } from '../../mods/wolfbud/hooks/events'
 import { Bridge, readKey } from './bridge'
 import type { Hello, RosterPayload, SessionEvent } from './bridge'
 import { WolfCall } from './call'
-import { activityAnswer, activityUpdate, feedLine, promptUpdate, quietEvent, sessionSpoken, spokenEvent } from './context'
+import {
+  activityAnswer,
+  activityUpdate,
+  eventLabel,
+  feedLine,
+  promptUpdate,
+  quietEvent,
+  quietOf,
+  sessionSpoken,
+  spokenEvent,
+} from './context'
 import { createWolf } from './wolf'
 import type { Wolf } from './wolf'
 
@@ -15,7 +25,6 @@ const RECENT_LIMIT = 150
 const LOST_BRIDGE_MS = 20_000
 const ANNOUNCE_KEY = 'wolfbud.announce'
 const BADGE_MAX = 236
-const BADGE_MIN = 64
 const RING_OUTSET = 7
 
 /** A roster row plus what this window has seen of it. The hub owns `isBusy` and `badge`. */
@@ -29,6 +38,8 @@ const claudeText = $('claude-status')
 const agentCaption = $('caption-agent')
 const userCaption = $('caption-user')
 const feed = $('feed')
+const captions = $('captions')
+const activity = $('activity')
 const rosterNav = $('roster')
 const callButton = $<HTMLButtonElement>('call')
 const muteButton = $<HTMLButtonElement>('mute')
@@ -123,7 +134,15 @@ function renderRoster(): void {
       button.className = 'roster-chip'
       if (row.id === focusedId) button.classList.add('focused')
       if (row.isBusy) button.classList.add('busy')
+      if (row.isRemote) button.classList.add('remote')
+      button.title = row.isRemote
+        ? `${row.name}: runs on ${row.host || 'another machine'}, reached through a tunnel to this one`
+        : `${row.name}: runs on this machine`
       button.textContent = row.name
+      const where = document.createElement('span')
+      where.className = 'roster-where'
+      where.textContent = row.isRemote ? `@${row.host || 'remote'}` : 'local'
+      button.append(where)
       if (row.badge > 0) {
         const badge = document.createElement('span')
         badge.className = 'roster-badge'
@@ -237,9 +256,11 @@ const call = new WolfCall({
     },
     agentLine(text) {
       agentCaption.textContent = text
+      showNewestCaption()
     },
     userLine(text) {
       userCaption.textContent = text
+      showNewestCaption()
     },
     userSpeaking(isSpeaking) {
       app.dataset.hearing = isSpeaking ? 'yes' : 'no'
@@ -260,7 +281,11 @@ function ingest(message: SessionEvent): void {
 function rosterUpdate(): string {
   const rows = [...sessions.values()]
   if (rows.length === 0) return '[claude activity] No Claude session is subscribed.'
-  const bits = rows.map(row => `${row.name}${row.id === focusedId ? ' (focused)' : ''}${row.isBusy ? ', working' : ', idle'}`)
+  const bits = rows.map(
+    row =>
+      `${row.name}${row.id === focusedId ? ' (focused)' : ''}${row.isBusy ? ', working' : ', idle'}` +
+      (row.isRemote ? `, remote on ${row.host || 'another machine'}` : ', on this machine'),
+  )
   return `[claude activity] Subscribed Claude sessions: ${bits.join('; ')}. Tools default to the focused one. Pass session to reach another.`
 }
 
@@ -274,6 +299,11 @@ function renderClaudeChip(): void {
   }
   const s = Math.round((Date.now() - row.busySince) / 1000)
   claudeText.textContent = `${name} · Claude is working · ${s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}`
+}
+
+/** Captions scroll inside their band: keep the newest words in view. */
+function showNewestCaption(): void {
+  captions.scrollTop = captions.scrollHeight
 }
 
 function renderFeed(): void {
@@ -295,6 +325,8 @@ function renderFeed(): void {
       return item
     }),
   )
+  // A short window scrolls the feed's section: keep Claude's latest step in view.
+  activity.scrollTop = activity.scrollHeight
 }
 
 /** Hands the agent each event: spoken when it matters, quiet context otherwise. Another session is a [session event]. */
@@ -307,7 +339,7 @@ function tellAgent(row: Tracked, event: ClaudeEvent): void {
   }
   const spoken = isFocused ? spokenEvent(event) : sessionSpoken(event, row.name)
   if (spoken !== null && (announceBox.checked || !isFocused)) {
-    call.announce(spoken, `${row.id}:${event.kind}`)
+    call.announce({ text: spoken, label: eventLabel(event, row.name), kind: `${row.id}:${event.kind}` }, quietOf(spoken))
   } else if (isFocused) {
     const quiet = quietEvent(event)
     if (quiet !== null) call.context(quiet)
@@ -332,13 +364,17 @@ muteButton.addEventListener('click', () => {
 })
 $('badge').addEventListener('click', () => wolf?.pet())
 
+/**
+ * Sizes the head to the stage. The layout reserves at least --badge-min for it,
+ * so text never pushes it out; it is never hidden, only clamped.
+ */
 function fitBadge(): void {
   const gap = parseFloat(getComputedStyle(stage).rowGap) || 0
+  const least = parseFloat(getComputedStyle(app).getPropertyValue('--badge-min')) || 120
   const tall = stage.clientHeight - statusText.offsetHeight - gap - 2 * RING_OUTSET
   const wide = stage.clientWidth - 2 * RING_OUTSET
-  const size = Math.floor(Math.min(BADGE_MAX, tall, wide))
-  app.dataset.wolf = size < BADGE_MIN ? 'hidden' : 'shown'
-  if (size < BADGE_MIN || size === badgeSize) return
+  const size = Math.floor(Math.max(least, Math.min(BADGE_MAX, tall, wide)))
+  if (size === badgeSize) return
   badgeSize = size
   app.style.setProperty('--badge', `${size}px`)
   wolf?.resize(size - 16)
