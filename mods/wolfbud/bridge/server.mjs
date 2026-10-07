@@ -74,6 +74,10 @@ let focusedId = null
 let callState = { status: 'idle', mode: null, error: null }
 /** A session asked for a call before the window could take it. */
 let callWanted = false
+/** When we last opened the window, and when its stream last dropped: a page then is likely still (re)connecting. */
+let launchedAt = 0
+let faceLostAt = 0
+const CONNECT_GRACE_MS = 10_000
 let commandSeq = 0
 /** The ElevenLabs key: from env, else the latest one a session brought. Never reaches the browser. */
 let apiKey = process.env.ELEVENLABS_API_KEY || ''
@@ -388,6 +392,7 @@ function launchChrome() {
     log('window launch skipped')
     return
   }
+  launchedAt = Date.now()
   spawn(
     'open',
     [
@@ -411,7 +416,10 @@ function reconcileCall() {
   if (tellWindow('command', { cmd: 'start-call' })) callWanted = false
 }
 
-/** Opens the one Chrome window, or raises it. Never starts a second instance of this profile. */
+/**
+ * Opens the one Chrome window, or raises it. Launching again never starts a second
+ * instance of this profile: Chrome hands the `--app` URL to the running one.
+ */
 async function showFace(call) {
   if (call) callWanted = true
   const pid = await ourChromePid()
@@ -421,8 +429,13 @@ async function showFace(call) {
     reconcileCall()
     return { connected: true }
   }
-  if (pid === null) launchChrome()
-  else raiseChrome(pid)
+  // Our Chrome can be up without the page: Chrome relaunches itself (after an
+  // update, say) without `--app`, and raising that shows an empty New Tab. So
+  // open the page unless one is probably still connecting. A duplicate window
+  // closes itself once the newer stream supersedes it.
+  const isConnecting = Date.now() - Math.max(launchedAt, faceLostAt) < CONNECT_GRACE_MS
+  if (pid !== null && isConnecting) raiseChrome(pid)
+  else launchChrome()
   return { connected: false }
 }
 
@@ -471,6 +484,7 @@ function openStream(req, res) {
     clearInterval(ping)
     if (face !== res) return
     face = null
+    faceLostAt = Date.now()
     wakeAll()
   })
 }
