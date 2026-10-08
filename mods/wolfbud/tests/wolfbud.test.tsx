@@ -29,7 +29,8 @@ function fakeHub(
     healthFails = 0,
     hubFile = HUB_FILE,
     subscribeStatus = 200,
-  }: { healthFails?: number; hubFile?: string | null; subscribeStatus?: number } = {},
+    appendRefusal = null,
+  }: { healthFails?: number; hubFile?: string | null; subscribeStatus?: number; appendRefusal?: string | null } = {},
 ) {
   const posts: Post[] = []
   const runs: string[][] = []
@@ -114,13 +115,12 @@ function fakeHub(
     notify()
     return { text: e.text }
   })
-  on('session.append', (_$, e) => {
+  // Passes the row on so the engine keeps it, or refuses the plugin's own note.
+  on('session.append', (_$, e, next) => {
+    if (appendRefusal !== null) return { deny: appendRefusal }
     for (const block of e.message.content) if (block.type === 'text') appended.push(String(block.text))
     notify()
-    // A hook that returns an answer without next() is skipped and the row is
-    // kept, so append would succeed. This pins the refusal path: a mid-turn
-    // note the engine will not take is queued behind the turn.
-    return { deny: 'no transcript store in the test kit' }
+    return next(e)
   })
 
   const postsTo = (path: string) => posts.filter(post => post.path === path || post.path.endsWith(path))
@@ -362,11 +362,28 @@ describe('prompts from the agent', () => {
     expect(hub.postsTo('/ack')[0]?.key).toBe('sess-token')
   })
 
-  // fakeHub refuses session.append. A mid-turn note the engine will not take
-  // still reaches Claude, queued behind the turn.
-  test('a "now" prompt mid-turn that cannot be steered in is queued, not lost', async ($, on) => {
+  test('a "now" prompt mid-turn is steered into the running turn', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const hub = fakeHub(on)
+    await startWolfbud($, hub)
+    await $.turn.start({ text: 'build the checkout form', turnId: 'turn-1' })
+    hub.commands.push({ id: 'cmd_2', type: 'send', prompt: 'Use the existing Button component.', when: 'now', summary: 'Use Button' })
+
+    await pull(hub, hub.clock)
+    await hub.until(() => hub.postsTo('/ack').length === 1)
+
+    expect(hub.appended).toHaveLength(1)
+    expect(hub.appended[0]).toContain('Use the existing Button component.')
+    expect(hub.appended[0]).toContain('take this into account from your next step')
+    expect(hub.submitted).toHaveLength(0)
+    expect(hub.postsTo('/ack')[0]?.body).toMatchObject({ id: 'cmd_2', ok: true, message: expect.stringContaining('Delivered mid-task') })
+  })
+
+  // A plugin above may refuse the note. What this pins: a refused mid-turn
+  // note still reaches Claude, queued behind the turn, and the ack says so.
+  test('a "now" prompt mid-turn that cannot be steered in is queued, not lost', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test' })
+    const hub = fakeHub(on, { appendRefusal: 'notes are off in this session' })
     await startWolfbud($, hub)
     await $.turn.start({ text: 'build the checkout form', turnId: 'turn-1' })
     hub.commands.push({ id: 'cmd_2', type: 'send', prompt: 'Use the existing Button component.', when: 'now', summary: 'Use Button' })
