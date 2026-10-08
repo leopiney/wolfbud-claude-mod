@@ -3,8 +3,9 @@
 // It is not a child of any session. A launcher (launch.mjs) starts it detached
 // on 127.0.0.1:4747 and exits; the port does not walk, because the mic grant is
 // per origin. Sessions subscribe, post events, and long-poll their own inbox.
-// The window is the only face: one Chrome app window, opened here, talking to
-// this process over SSE.
+// The window is the only face. When WolfBud.app is installed it is that face;
+// otherwise this process opens one Chrome app window. Either one talks to the
+// hub over SSE.
 //
 // Three keys, on purpose:
 //   - service token (~/.wolfbud/hub.json): a mod may subscribe. It is not in
@@ -18,13 +19,15 @@
 // Env: WOLFBUD_PORT (default 4747, no fallback ports), WOLFBUD_TOKEN and
 // WOLFBUD_WINDOW_KEY (else the saved or fresh ones), ELEVENLABS_API_KEY (else
 // the key a subscribing session brings), WOLFBUD_AGENT_ID (use as-is, never
-// synced), WOLFBUD_NO_WINDOW=1 (tests: do not spawn Chrome).
+// synced), WOLFBUD_NO_WINDOW=1 (tests: do not spawn a window),
+// WOLFBUD_FACE=chrome|native, WOLFBUD_APP (a WolfBud.app to open).
 
 import { execFile, spawn } from 'node:child_process'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { homedir } from 'node:os'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -393,6 +396,28 @@ function raiseChrome(pid) {
   }).unref()
 }
 
+/** First installed WolfBud.app, or null when the face should be Chrome. */
+function nativeAppPath() {
+  if (process.env.WOLFBUD_FACE === 'chrome') return null
+  const bundled = resolve(dirname(fileURLToPath(import.meta.url)), '../../../macos/.build/WolfBud.app')
+  const candidates = [process.env.WOLFBUD_APP, bundled, join(homedir(), 'Applications', 'WolfBud.app'), '/Applications/WolfBud.app']
+  return candidates.find(path => path && existsSync(path)) ?? null
+}
+
+function openNative(appPath) {
+  if (process.env.WOLFBUD_NO_WINDOW === '1') return
+  spawn('open', ['-a', appPath], { stdio: 'ignore', detached: true }).unref()
+}
+
+function launchNative(appPath) {
+  if (process.env.WOLFBUD_NO_WINDOW === '1') {
+    log('window launch skipped')
+    return
+  }
+  launchedAt = Date.now()
+  openNative(appPath)
+}
+
 function launchChrome() {
   if (process.env.WOLFBUD_NO_WINDOW === '1') {
     log('window launch skipped')
@@ -423,22 +448,29 @@ function reconcileCall() {
 }
 
 /**
- * Opens the one Chrome window, or raises it. Launching again never starts a second
- * instance of this profile: Chrome hands the `--app` URL to the running one.
+ * Opens the one face, or raises it. The native app wins when it is installed.
+ * Chrome still hands a second `--app` URL to the window already on this profile.
  */
 async function showFace(call) {
   if (call) callWanted = true
-  const pid = await ourChromePid()
+  const appPath = nativeAppPath()
   if (face) {
-    raiseChrome(pid)
+    if (appPath) openNative(appPath)
+    else raiseChrome(await ourChromePid())
     tellWindow('command', { cmd: 'raise' })
     reconcileCall()
     return { connected: true }
   }
+  if (appPath) {
+    launchNative(appPath)
+    return { connected: false }
+  }
+  if (process.env.WOLFBUD_FACE === 'native') log('native WolfBud.app was not found; opening Chrome')
   // Our Chrome can be up without the page: Chrome relaunches itself (after an
   // update, say) without `--app`, and raising that shows an empty New Tab. So
   // open the page unless one is probably still connecting. A duplicate window
   // closes itself once the newer stream supersedes it.
+  const pid = await ourChromePid()
   const isConnecting = Date.now() - Math.max(launchedAt, faceLostAt) < CONNECT_GRACE_MS
   if (pid !== null && isConnecting) raiseChrome(pid)
   else launchChrome()

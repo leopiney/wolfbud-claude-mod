@@ -18,6 +18,8 @@ Claude session B ── wolfbud mod ── subscribe, events, long-poll ──�
 
 The hub is not a child of any Claude session. The first `/wolfbud` that finds it down runs `bridge/launch.mjs`, which starts `server.mjs` detached, waits for it to answer, and exits. Later sessions only subscribe; a session that is already subscribed only raises the window. Claude cannot inject a prompt from outside a session, so each mod stays: it is the hands for that session only. The hub never calls Claude. It queues a command; the matching mod pulls it and runs `deliver()`. Each pull also carries the call's state, so a reloaded session sees the present rather than a replay.
 
+On a Mac with `WolfBud.app` installed (built from [`macos/`](../../macos)), that app is the face. Everywhere else the face is the Chrome window below. `WOLFBUD_FACE=chrome` forces Chrome, and `WOLFBUD_FACE=native` uses the app, falling back to Chrome when the bundle is missing.
+
 - **One window.** A Chrome app window with its own profile at `~/.wolfbud/chrome`, so the mic grant sticks and a call can start without a click. The hub opens it once and raises it after that. Orca and terminal-browser are not faces for the wolf.
 - **Many sessions, one call.** Each `/wolfbud` adds a roster row and a short name (`auth`, `auth-2`). The voice tools take that name and default to the focused session. A second session that needs you is a badge, or a `[session event]` on the call already live. Not a second call.
 - **What the agent hears:** a snapshot of the focused session when the call starts, rolling `[claude activity]` updates, `[claude event]` for that session, and `[session event]` when another subscribed Claude finishes or waits on permission.
@@ -112,7 +114,7 @@ In the window's session list, each session shows where it runs: `local` for this
 | --------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api_key` | `$ELEVENLABS_API_KEY` | The hub mints call tokens with it. Sensitive. Each `/wolfbud` hands it to the hub, which keeps the first non-empty one, so a session with a key repairs a hub started without one. |
 
-The window is always one Google Chrome app window on `127.0.0.1:4747`. The port does not walk: the mic grant is per origin.
+The Chrome face is one Google Chrome app window on `127.0.0.1:4747`. The port does not walk: the mic grant is per origin. The native app uses the same port and the same routes.
 
 Env overrides: `WOLFBUD_AGENT_ID` (an agent to use as it is, never synced; else the one the hub set up), `WOLFBUD_NODE` (else `node` on PATH, used only to run the launcher), `WOLFBUD_REMOTE` (`1` or `0`: force remote or local, see [Remote sessions](#remote-sessions)), `WOLFBUD_HOST` (the name a remote session shows in the session list).
 
@@ -133,7 +135,7 @@ Env overrides: `WOLFBUD_AGENT_ID` (an agent to use as it is, never synced; else 
 - The hub listens on 127.0.0.1 only and rejects other `Host` and `Origin` values. Remote sessions reach it through a tunnel you open (see [Remote sessions](#remote-sessions)). Don't expose port 4747 on a public URL: the window routes would be reachable too.
 - Three keys. `~/.wolfbud/hub.json` holds the service token a mod uses to subscribe, and nothing else. The window URL holds a different key, which can enqueue a command for a short name and cannot pull an inbox; Chrome's command line shows it, so it stays the weakest. Subscribe returns a session token that pulls that session's inbox, acks, shows the window and ends the call. It cannot enqueue for every session.
 - The agent requires signed tokens, so its id alone can't start a call.
-- The ElevenLabs key stays in the hub process and never reaches the browser.
+- The ElevenLabs key stays in the hub process and never reaches the face, browser or native app.
 - Prompts reach Claude framed as coming from the wolfbud plugin ("The user asked WolfBud … to pass this on"), and the pane lists each one.
 - If the hub is down, the Claude session keeps working. The pane says so.
 

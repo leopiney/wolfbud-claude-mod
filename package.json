@@ -13,7 +13,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -p window && tsc -p mods/wolfbud",
     "prepare": "husky",
-    "install-plugin": "node scripts/install-plugin.mjs"
+    "install-plugin": "node scripts/install-plugin.mjs",
+    "macos:build": "macos/scripts/package-app.sh"
   },
   "devDependencies": {
     "@elevenlabs/client": "1.26.0",
