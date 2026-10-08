@@ -59,7 +59,7 @@ There are two more cuts of the same session: [How it works](https://github.com/u
 
 The mod itself is in [`mods/wolfbud`](mods/wolfbud); its [README](mods/wolfbud/README.md) has the full architecture, commands and options.
 
-> **One wolf for every Claude session.** `/wolfbud` subscribes the current session to a single hub and a single Chrome window. Several sessions can sit under that one call. The window is a Chrome app with its own profile, not a tab in Orca or a terminal split.
+> **One wolf for every Claude session.** `/wolfbud` subscribes the current session to a single hub and a single face. Several sessions can sit under that one call. On macOS the face is [WolfBud.app](macos/) when that app is installed; otherwise it is a Chrome app window with its own profile. It is not a tab in Orca or a terminal split. `WOLFBUD_FACE=chrome` keeps the Chrome window.
 
 ## Quick start
 

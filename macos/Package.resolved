@@ -1,0 +1,51 @@
+{
+  "originHash" : "7ca36596259503e62a1e1175eec98eb9243b3396d0c33056ffecadcae87622d8",
+  "pins" : [
+    {
+      "identity" : "client-sdk-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/client-sdk-swift.git",
+      "state" : {
+        "revision" : "f07831a7f06bca9e2fc2e136db591b7b42f16d8d",
+        "version" : "2.17.0"
+      }
+    },
+    {
+      "identity" : "elevenlabs-swift-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/elevenlabs/elevenlabs-swift-sdk.git",
+      "state" : {
+        "revision" : "24e2c3c9ab80f4571d4d77ce71c1781094115dbb",
+        "version" : "3.4.0"
+      }
+    },
+    {
+      "identity" : "gltfkit2",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/warrenm/GLTFKit2.git",
+      "state" : {
+        "revision" : "e69e354c4f31ea07b7816b8cbe2ddb28e897d073",
+        "version" : "0.5.15"
+      }
+    },
+    {
+      "identity" : "livekit-uniffi-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/livekit-uniffi-xcframework.git",
+      "state" : {
+        "revision" : "7a9bf91b1601d5c408ae0cac7dc2047b5a4f615e",
+        "version" : "0.1.9"
+      }
+    },
+    {
+      "identity" : "webrtc-xcframework",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/livekit/webrtc-xcframework.git",
+      "state" : {
+        "revision" : "c73deceaddd9c07293871ae28f24d4326cc86d62",
+        "version" : "150.7871.2"
+      }
+    }
+  ],
+  "version" : 3
+}

@@ -11,9 +11,14 @@ package-lock.json
 # Skills CLI payloads. The pin is skills-lock.json; restore with
 # `npx skills experimental_install`. Repo-authored skills stay tracked.
 .agents/
+/agent/
 .pi/skills/
 .claude/skills/*
 !.claude/skills/elevenlabs-mod/
 !.claude/skills/elevenlabs-mod/**
 !.claude/skills/mod-dev/
 !.claude/skills/mod-dev/**
+!.claude/skills/macos-wolfbud/
+!.claude/skills/macos-wolfbud/**
+# Swift package build and the packaged WolfBud.app
+macos/.build/

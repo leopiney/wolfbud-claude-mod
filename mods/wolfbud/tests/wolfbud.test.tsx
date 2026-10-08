@@ -117,7 +117,10 @@ function fakeHub(
   on('session.append', (_$, e) => {
     for (const block of e.message.content) if (block.type === 'text') appended.push(String(block.text))
     notify()
-    return { message: e.message, uuid: 'row-1' }
+    // A hook that returns an answer without next() is skipped and the row is
+    // kept, so append would succeed. This pins the refusal path: a mid-turn
+    // note the engine will not take is queued behind the turn.
+    return { deny: 'no transcript store in the test kit' }
   })
 
   const postsTo = (path: string) => posts.filter(post => post.path === path || post.path.endsWith(path))
@@ -359,9 +362,8 @@ describe('prompts from the agent', () => {
     expect(hub.postsTo('/ack')[0]?.key).toBe('sess-token')
   })
 
-  // The kit has no store beneath session.append (a hook there can't answer
-  // alone), so a plugin's append is refused here: what this pins is that a
-  // refused mid-turn note still reaches Claude, queued behind the turn.
+  // fakeHub refuses session.append. A mid-turn note the engine will not take
+  // still reaches Claude, queued behind the turn.
   test('a "now" prompt mid-turn that cannot be steered in is queued, not lost', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const hub = fakeHub(on)
