@@ -397,8 +397,8 @@ function raiseChrome(pid) {
 }
 
 /** First installed WolfBud.app, or null when the face should be Chrome. */
-function nativeAppPath() {
-  if (process.env.WOLFBUD_FACE === 'chrome') return null
+function nativeAppPath(faceChoice) {
+  if (faceChoice === 'chrome') return null
   const bundled = resolve(dirname(fileURLToPath(import.meta.url)), '../../../macos/.build/WolfBud.app')
   const candidates = [process.env.WOLFBUD_APP, bundled, join(homedir(), 'Applications', 'WolfBud.app'), '/Applications/WolfBud.app']
   return candidates.find(path => path && existsSync(path)) ?? null
@@ -451,9 +451,9 @@ function reconcileCall() {
  * Opens the one face, or raises it. The native app wins when it is installed.
  * Chrome still hands a second `--app` URL to the window already on this profile.
  */
-async function showFace(call) {
+async function showFace(call, faceChoice) {
   if (call) callWanted = true
-  const appPath = nativeAppPath()
+  const appPath = nativeAppPath(faceChoice)
   if (face) {
     if (appPath) openNative(appPath)
     else raiseChrome(await ourChromePid())
@@ -465,7 +465,7 @@ async function showFace(call) {
     launchNative(appPath)
     return { connected: false }
   }
-  if (process.env.WOLFBUD_FACE === 'native') log('native WolfBud.app was not found; opening Chrome')
+  if (faceChoice === 'native') log('native WolfBud.app was not found; opening Chrome')
   // Our Chrome can be up without the page: Chrome relaunches itself (after an
   // update, say) without `--app`, and raising that shows an empty New Tab. So
   // open the page unless one is probably still connecting. A duplicate window
@@ -615,7 +615,9 @@ async function fromSession(row, action, req, res) {
     case 'POST window': {
       const body = await readJson(req)
       setFocus(row)
-      return sendJson(res, 200, { ok: true, ...(await showFace(Boolean(body.call))) })
+      // The hub outlives the Claude that started it, so the asking session's WOLFBUD_FACE wins over ours.
+      const wanted = [body.face, process.env.WOLFBUD_FACE].find(value => value === 'chrome' || value === 'native')
+      return sendJson(res, 200, { ok: true, ...(await showFace(Boolean(body.call), wanted)) })
     }
     case 'POST call/end':
       callWanted = false

@@ -266,6 +266,15 @@ describe('the hub', () => {
     expect(hub.postsTo('/api/session/window').at(-1)?.body).toEqual({ call: true })
   })
 
+  test('/wolfbud call tells the hub which face this session asked for', async ($, on) => {
+    mock.env(on, { HOME: '/Users/test', WOLFBUD_FACE: 'chrome' })
+    const hub = fakeHub(on)
+
+    await $.command.run({ command: 'wolfbud', args: 'call', ...FROM_COMPOSER })
+
+    expect(hub.postsTo('/api/session/window').at(-1)?.body).toEqual({ call: true, face: 'chrome' })
+  })
+
   test('/wolfbud end hangs up the call and does not unsubscribe', async ($, on) => {
     mock.env(on, { HOME: '/Users/test' })
     const hub = fakeHub(on)

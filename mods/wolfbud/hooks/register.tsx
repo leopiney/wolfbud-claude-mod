@@ -349,7 +349,8 @@ async function showWindow($: EngineInterface, withCall: boolean, isRetry = false
   const current = await read($, hub)
   if (current.status !== 'ready' && !(await connect($))) return downText($)
   try {
-    const res = await hubFetch($, '/api/session/window', { body: { call: withCall } })
+    const face = ((await $.env.get('WOLFBUD_FACE')) ?? '').trim().toLowerCase()
+    const res = await hubFetch($, '/api/session/window', { body: face === '' ? { call: withCall } : { call: withCall, face } })
     // The hub forgot us (it restarted): subscribe again, once.
     if (res.status === 401 && !isRetry) return (await connect($)) ? showWindow($, withCall, true) : downText($)
     if (!res.ok) return 'WolfBud could not open the window.'
